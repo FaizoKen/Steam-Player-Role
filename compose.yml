@@ -1,0 +1,50 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8088:8088"
+    environment:
+      DATABASE_URL: postgres://spr:password@db:5432/steam_player_role
+      SESSION_SECRET: ${SESSION_SECRET}
+      BASE_URL: ${BASE_URL}
+      LISTEN_ADDR: "0.0.0.0:8088"
+      AUTH_GATEWAY_URL: ${AUTH_GATEWAY_URL}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      STEAM_API_KEY: ${STEAM_API_KEY}
+      STEAM_API_RATE_LIMIT: ${STEAM_API_RATE_LIMIT:-3600}
+      RUST_LOG: steam_player_role=info,tower_http=info
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  db:
+    image: postgres:16-alpine
+    command: >
+      postgres -c shared_buffers=64MB -c work_mem=2MB -c
+      maintenance_work_mem=32MB -c effective_cache_size=128MB -c
+      max_connections=15 -c wal_buffers=4MB -c checkpoint_completion_target=0.9
+      -c random_page_cost=1.1
+    environment:
+      POSTGRES_DB: steam_player_role
+      POSTGRES_USER: spr
+      POSTGRES_PASSWORD: password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    shm_size: "64m"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U spr -d steam_player_role" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  pgdata:
