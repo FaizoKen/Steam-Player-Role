@@ -410,7 +410,7 @@ async fn fetch_guild_members(
     session_cookie_value: &str,
 ) -> Result<(Vec<String>, Option<String>), AppError> {
     let path = format!(
-        "/auth/guild_members?guild_id={}",
+        "/auth/guild_members?guild_id={}&plugin=steam-player-role",
         urlencoding::encode(guild_id)
     );
     let body = auth_gateway_get(state, &path, session_cookie_value).await?;

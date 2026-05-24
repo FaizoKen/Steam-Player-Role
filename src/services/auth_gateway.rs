@@ -5,6 +5,8 @@ use serde::Deserialize;
 
 use crate::error::AppError;
 
+const PLUGIN_SLUG: &str = "steam-player-role";
+
 #[derive(Debug, Deserialize)]
 struct UserGuildIdsResponse {
     guild_ids: Vec<String>,
@@ -26,7 +28,7 @@ pub async fn fetch_user_guild_ids(
     let resp = http
         .get(&url)
         .header("X-Internal-Key", key)
-        .query(&[("discord_id", discord_id)])
+        .query(&[("discord_id", discord_id), ("plugin", PLUGIN_SLUG)])
         .send()
         .await
         .map_err(|e| AppError::Internal(format!("auth_gateway request failed: {e}")))?;
@@ -57,7 +59,7 @@ pub async fn fetch_guild_member_ids(
     let resp = http
         .get(&url)
         .header("X-Internal-Key", key)
-        .query(&[("guild_id", guild_id)])
+        .query(&[("guild_id", guild_id), ("plugin", PLUGIN_SLUG)])
         .send()
         .await
         .map_err(|e| AppError::Internal(format!("auth_gateway request failed: {e}")))?;

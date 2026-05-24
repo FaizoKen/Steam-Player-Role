@@ -90,7 +90,7 @@ pub async fn get_config(
     .await?
     .unwrap_or_else(|| "members".to_string());
 
-    let verify_url = format!("{}/verify", state.config.base_url);
+    let verify_url = format!("{}/verify?guild={}", state.config.base_url, link.0);
     let players_url = format!("{}/players/{}", state.config.base_url, link.0);
     let schema =
         schema::build_config_schema(&link.1, &verify_url, &players_url, &view_permission);

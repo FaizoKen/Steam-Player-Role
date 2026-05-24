@@ -77,6 +77,11 @@ pub fn render_verify_page(base_url: &str) -> String {
         .trust-note strong {{ color: #c7d5e0; }}
         .btn-logout {{ background: transparent; color: #8f9bab; border: 1px solid #3a6186; padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit; transition: all .15s; }}
         .btn-logout:hover {{ color: #f87171; border-color: #7f1d1d; background: #7f1d1d22; }}
+        .guild-ctx {{ display: none; align-items: center; gap: 10px; background: #052e16; border: 1px solid #14532d; color: #86efac; padding: 8px 14px; border-radius: 8px; margin: 12px 0 6px; font-size: 13px; line-height: 1.5; }}
+        .guild-ctx.show {{ display: flex; }}
+        .guild-ctx.warn {{ background: #1c1208; border-color: #422006; color: #fbbf24; }}
+        .guild-ctx .gctx-icon {{ flex-shrink: 0; }}
+        .guild-ctx .gctx-name {{ color: #fff; font-weight: 600; }}
     </style>
 </head>
 <body>
@@ -88,6 +93,12 @@ pub fn render_verify_page(base_url: &str) -> String {
         <button id="logout-btn" class="btn-logout hidden" onclick="doLogout()">Logout</button>
     </div>
     <p class="subtitle">Link your Discord account with your Steam profile to automatically receive server roles.</p>
+
+    <!-- Server context banner: only shown when ?guild=<id> is present. -->
+    <div id="guild-ctx" class="guild-ctx">
+        <svg class="gctx-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        <span id="guild-ctx-text"></span>
+    </div>
 
     <div id="loading-section" class="card"><p style="color: #7a8a99;">Loading...</p></div>
 
@@ -111,6 +122,10 @@ pub fn render_verify_page(base_url: &str) -> String {
         <div class="info-row"><span class="label">Steam</span> <span class="val" id="linked-steam"></span></div>
         <div class="info-row"><span class="label">Discord</span> <span class="val" id="linked-discord" style="color:#8f9bab;font-weight:400;font-size:13px;"></span></div>
         <p style="color:#4ade80; margin-top:12px; font-size:13px;">Your roles are assigned automatically based on your Steam data.</p>
+        <p style="margin-top:14px; font-size:13px; color:#8f9bab;">
+            Receiving Steam roles in servers you didn't intend?
+            <a href="/auth/my_servers?from=/steam-player-role/verify" style="color:#66c0f4;">Choose which servers receive roles →</a>
+        </p>
         <hr class="divider">
         <div class="actions">
             <button class="btn btn-danger" onclick="doUnlink()">Unlink Account</button>
@@ -136,6 +151,27 @@ pub fn render_verify_page(base_url: &str) -> String {
 
     <script>
     const API = '{base_url}';
+    const PLUGIN_SLUG = 'steam-player-role';
+
+    // Optional ?guild=<id> tells us the user came from a per-guild verify
+    // link an admin shared in their Discord. Used to (a) show a contextual
+    // banner and (b) auto-clear any existing opt-out (per-plugin + master)
+    // once they're authenticated.
+    const guildId = (() => {{
+        try {{
+            const v = new URLSearchParams(window.location.search).get('guild');
+            return v && /^[0-9]{{5,25}}$/.test(v) ? v : '';
+        }} catch (e) {{ return ''; }}
+    }})();
+
+    // Preserve the guild context across the Discord OAuth round-trip.
+    (function patchLoginHref() {{
+        if (!guildId) return;
+        const link = document.querySelector('#login-section a.btn-discord');
+        if (!link) return;
+        const returnTo = '/steam-player-role/verify?guild=' + encodeURIComponent(guildId);
+        link.href = '/auth/login?return_to=' + encodeURIComponent(returnTo);
+    }})();
 
     async function api(method, path, body) {{
         const opts = {{ method, headers: {{}}, credentials: 'include' }};
@@ -145,6 +181,19 @@ pub fn render_verify_page(base_url: &str) -> String {
         }}
         const res = await fetch(API + path, opts);
         const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Request failed');
+        return data;
+    }}
+
+    // Gateway-absolute helper for /auth/* (cookie-authed via rl_session).
+    async function gatewayApi(method, path, body) {{
+        const opts = {{ method, headers: {{}}, credentials: 'include' }};
+        if (body) {{
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(body);
+        }}
+        const res = await fetch(path, opts);
+        const data = await res.json().catch(() => ({{}}));
         if (!res.ok) throw new Error(data.error || 'Request failed');
         return data;
     }}
@@ -166,12 +215,65 @@ pub fn render_verify_page(base_url: &str) -> String {
 
     function clearMsg() {{ document.getElementById('msg').classList.add('hidden'); }}
 
+    function showGuildCtx(text, isWarning) {{
+        const el = document.getElementById('guild-ctx');
+        document.getElementById('guild-ctx-text').innerHTML = text;
+        el.classList.toggle('warn', !!isWarning);
+        el.classList.add('show');
+    }}
+
+    // Resolve guildId → display name via the gateway, then clear any
+    // opt-out blocking this plugin from assigning roles in that server.
+    async function applyGuildContext() {{
+        if (!guildId) return;
+        let prefs;
+        try {{
+            prefs = await gatewayApi('GET', '/auth/preferences');
+        }} catch (e) {{
+            return;
+        }}
+        const g = (prefs.guilds || []).find(x => x.guild_id === guildId);
+        if (!g) {{
+            showGuildCtx("You're not in that server yet — join it on Discord, then refresh.", true);
+            return;
+        }}
+        const safeName = (g.guild_name || '(unnamed server)')
+            .replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c]);
+        const wasDisabled = g.master_optout || (g.plugin_optouts || []).includes(PLUGIN_SLUG);
+        try {{
+            if (g.master_optout) {{
+                await gatewayApi('POST', '/auth/preferences', {{
+                    guild_id: guildId, plugin: null, enabled: true,
+                }});
+            }}
+            if ((g.plugin_optouts || []).includes(PLUGIN_SLUG)) {{
+                await gatewayApi('POST', '/auth/preferences', {{
+                    guild_id: guildId, plugin: PLUGIN_SLUG, enabled: true,
+                }});
+            }}
+        }} catch (e) {{
+            // Even if clear failed, still show the banner.
+        }}
+        const nameHtml = '<span class="gctx-name">' + safeName + '</span>';
+        if (wasDisabled) {{
+            showGuildCtx(isLinked
+                ? 'Enabled Steam roles for ' + nameHtml + ' — roles apply on the next sync.'
+                : 'Enabled Steam roles for ' + nameHtml + ' — finish linking below to receive roles.');
+        }} else {{
+            showGuildCtx(isLinked
+                ? 'Steam roles are active in ' + nameHtml + '.'
+                : 'Once linked, Steam roles will apply in ' + nameHtml + '.');
+        }}
+    }}
+
     let currentName = '';
+    let isLinked = false;
 
     async function init() {{
         try {{
             const s = await api('GET', '/verify/status');
             currentName = s.display_name || '';
+            isLinked = !!s.linked;
             document.getElementById('logout-btn').classList.remove('hidden');
             if (s.linked) {{
                 document.getElementById('linked-steam').textContent = s.steam_name || s.linked;
@@ -181,6 +283,8 @@ pub fn render_verify_page(base_url: &str) -> String {
                 document.getElementById('steam-discord').textContent = s.display_name;
                 showSection('steam-section');
             }}
+            // Session is valid — apply per-guild side effects (if any).
+            applyGuildContext();
         }} catch (e) {{
             showSection('login-section');
         }}
