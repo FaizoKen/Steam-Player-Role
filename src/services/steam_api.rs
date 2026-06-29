@@ -178,10 +178,7 @@ impl SteamApiClient {
     }
 
     /// Batch up to 100 steam IDs
-    pub async fn get_player_bans(
-        &self,
-        steam_ids: &[&str],
-    ) -> Result<Vec<PlayerBan>, AppError> {
+    pub async fn get_player_bans(&self, steam_ids: &[&str]) -> Result<Vec<PlayerBan>, AppError> {
         if steam_ids.is_empty() {
             return Ok(vec![]);
         }
@@ -221,10 +218,7 @@ impl SteamApiClient {
         Ok(resp.response.player_level.unwrap_or(0))
     }
 
-    pub async fn get_owned_games(
-        &self,
-        steam_id: &str,
-    ) -> Result<(Vec<OwnedGame>, i64), AppError> {
+    pub async fn get_owned_games(&self, steam_id: &str) -> Result<(Vec<OwnedGame>, i64), AppError> {
         self.wait_rate_limit().await;
         let url = format!(
             "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={}&steamid={}&include_appinfo=1&include_played_free_games=1",
@@ -277,10 +271,7 @@ impl SteamApiClient {
         Ok(parsed.playerstats.achievements.unwrap_or_default())
     }
 
-    pub async fn get_user_group_list(
-        &self,
-        steam_id: &str,
-    ) -> Result<Vec<SteamGroup>, AppError> {
+    pub async fn get_user_group_list(&self, steam_id: &str) -> Result<Vec<SteamGroup>, AppError> {
         self.wait_rate_limit().await;
         let url = format!(
             "https://api.steampowered.com/ISteamUser/GetUserGroupList/v1/?key={}&steamid={}",

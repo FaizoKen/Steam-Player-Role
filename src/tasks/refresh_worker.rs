@@ -24,7 +24,9 @@ impl CachedInterval {
         Self {
             value: AtomicI64::new(MIN_REFRESH_SECS),
             max_req_per_hour,
-            last_computed: Mutex::new(Instant::now() - std::time::Duration::from_secs(INTERVAL_CACHE_SECS + 1)),
+            last_computed: Mutex::new(
+                Instant::now() - std::time::Duration::from_secs(INTERVAL_CACHE_SECS + 1),
+            ),
         }
     }
 
@@ -39,7 +41,8 @@ impl CachedInterval {
             let interval = if player_count == 0 {
                 MIN_REFRESH_SECS
             } else {
-                ((player_count * 3600) / self.max_req_per_hour).clamp(MIN_REFRESH_SECS, MAX_REFRESH_SECS)
+                ((player_count * 3600) / self.max_req_per_hour)
+                    .clamp(MIN_REFRESH_SECS, MAX_REFRESH_SECS)
             };
 
             self.value.store(interval, Ordering::Relaxed);
@@ -123,7 +126,8 @@ pub async fn run(state: Arc<AppState>) {
         })
         .collect();
 
-        let app_ids_to_fetch: HashSet<String> = needed_app_ids.union(&all_app_ids).cloned().collect();
+        let app_ids_to_fetch: HashSet<String> =
+            needed_app_ids.union(&all_app_ids).cloned().collect();
 
         match refresh_user(&state, &steam_id, &app_ids_to_fetch).await {
             Ok(()) => {
@@ -190,7 +194,10 @@ async fn refresh_user(
     let (games, game_count) = client.get_owned_games(steam_id).await.unwrap_or_default();
 
     // Fetch groups
-    let groups = client.get_user_group_list(steam_id).await.unwrap_or_default();
+    let groups = client
+        .get_user_group_list(steam_id)
+        .await
+        .unwrap_or_default();
 
     // Build JSON data
     let profile_data = serde_json::to_value(&profile).unwrap_or_default();
@@ -199,7 +206,10 @@ async fn refresh_user(
     let groups_json = serde_json::to_value(&groups).unwrap_or_default();
 
     let is_vac_banned = ban.as_ref().map(|b| b.vac_banned).unwrap_or(false);
-    let is_game_banned = ban.as_ref().map(|b| b.number_of_game_bans > 0).unwrap_or(false);
+    let is_game_banned = ban
+        .as_ref()
+        .map(|b| b.number_of_game_bans > 0)
+        .unwrap_or(false);
     let country_code = profile
         .as_ref()
         .and_then(|p| p.loccountrycode.clone())

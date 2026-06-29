@@ -30,7 +30,20 @@ pub async fn sync_for_player(discord_id: &str, state: &AppState) -> Result<(), A
     let rl_client = &state.rl_client;
 
     // Get player's Steam ID and cached data
-    let cache_row = sqlx::query_as::<_, (String, serde_json::Value, serde_json::Value, i32, Option<chrono::DateTime<chrono::Utc>>, i32, bool, bool, String)>(
+    let cache_row = sqlx::query_as::<
+        _,
+        (
+            String,
+            serde_json::Value,
+            serde_json::Value,
+            i32,
+            Option<chrono::DateTime<chrono::Utc>>,
+            i32,
+            bool,
+            bool,
+            String,
+        ),
+    >(
         "SELECT uc.steam_id, uc.owned_games, uc.groups, uc.steam_level, uc.account_created, \
          uc.total_games_owned, uc.is_vac_banned, uc.is_game_banned, uc.country_code \
          FROM user_cache uc \
@@ -41,7 +54,18 @@ pub async fn sync_for_player(discord_id: &str, state: &AppState) -> Result<(), A
     .fetch_optional(pool)
     .await?;
 
-    let Some((steam_id, owned_games, groups, steam_level, account_created, total_games_owned, is_vac_banned, is_game_banned, country_code)) = cache_row else {
+    let Some((
+        steam_id,
+        owned_games,
+        groups,
+        steam_level,
+        account_created,
+        total_games_owned,
+        is_vac_banned,
+        is_game_banned,
+        country_code,
+    )) = cache_row
+    else {
         return Ok(());
     };
 
@@ -71,23 +95,20 @@ pub async fn sync_for_player(discord_id: &str, state: &AppState) -> Result<(), A
     }
 
     // Get role links for guilds this user is in
-    let role_links = sqlx::query_as::<_, (String, String, String, sqlx::types::Json<Vec<Condition>>)>(
-        "SELECT rl.guild_id, rl.role_id, rl.api_token, rl.conditions \
+    let role_links =
+        sqlx::query_as::<_, (String, String, String, sqlx::types::Json<Vec<Condition>>)>(
+            "SELECT rl.guild_id, rl.role_id, rl.api_token, rl.conditions \
          FROM role_links rl \
          WHERE rl.guild_id = ANY($1)",
-    )
-    .bind(&guild_ids[..])
-    .fetch_all(pool)
-    .await?;
+        )
+        .bind(&guild_ids[..])
+        .fetch_all(pool)
+        .await?;
 
     // Collect app_ids referenced by conditions for achievement lookup
     let needed_app_ids: HashSet<String> = role_links
         .iter()
-        .flat_map(|(_, _, _, conditions)| {
-            conditions
-                .iter()
-                .filter_map(|c| c.app_id.clone())
-        })
+        .flat_map(|(_, _, _, conditions)| conditions.iter().filter_map(|c| c.app_id.clone()))
         .collect();
 
     // Fetch achievement data for needed games
@@ -125,8 +146,16 @@ pub async fn sync_for_player(discord_id: &str, state: &AppState) -> Result<(), A
 
     // Phase 1: evaluate conditions locally
     enum Action {
-        Add { guild_id: String, role_id: String, api_token: String },
-        Remove { guild_id: String, role_id: String, api_token: String },
+        Add {
+            guild_id: String,
+            role_id: String,
+            api_token: String,
+        },
+        Remove {
+            guild_id: String,
+            role_id: String,
+            api_token: String,
+        },
     }
 
     let mut actions: Vec<Action> = Vec::new();
@@ -235,7 +264,11 @@ fn build_condition_where(conditions: &[Condition]) -> (String, Vec<ConditionBind
                 let col = condition.field.sql_column().unwrap();
                 let val = condition.value.as_i64().unwrap_or(0);
                 if matches!(condition.operator, ConditionOperator::Between) {
-                    let end = condition.value_end.as_ref().and_then(|v| v.as_i64()).unwrap_or(val);
+                    let end = condition
+                        .value_end
+                        .as_ref()
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(val);
                     let idx_start = binds.len() + 1;
                     let idx_end = binds.len() + 2;
                     clauses.push(format!("{col} >= ${idx_start} AND {col} <= ${idx_end}"));
@@ -264,7 +297,11 @@ fn build_condition_where(conditions: &[Condition]) -> (String, Vec<ConditionBind
             ConditionField::AccountAgeDays => {
                 let val = condition.value.as_i64().unwrap_or(0);
                 if matches!(condition.operator, ConditionOperator::Between) {
-                    let end = condition.value_end.as_ref().and_then(|v| v.as_i64()).unwrap_or(val);
+                    let end = condition
+                        .value_end
+                        .as_ref()
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(val);
                     let idx_start = binds.len() + 1;
                     let idx_end = binds.len() + 2;
                     clauses.push(format!(
@@ -286,7 +323,9 @@ fn build_condition_where(conditions: &[Condition]) -> (String, Vec<ConditionBind
                 if let Some(app_id) = &condition.app_id {
                     let expected = condition.value.as_bool().unwrap_or(true);
                     let idx = binds.len() + 1;
-                    let containment = format!("uc.owned_games @> concat('[{{\"appid\":', ${idx}::text, '}}]')::jsonb");
+                    let containment = format!(
+                        "uc.owned_games @> concat('[{{\"appid\":', ${idx}::text, '}}]')::jsonb"
+                    );
                     if expected {
                         clauses.push(containment);
                     } else {
@@ -339,7 +378,10 @@ pub async fn sync_for_role_link(
 
     // No conditions configured → role is unconfigured, assign to nobody.
     if conditions.is_empty() {
-        match rl_client.upload_users(guild_id, role_id, &[], &api_token).await {
+        match rl_client
+            .upload_users(guild_id, role_id, &[], &api_token)
+            .await
+        {
             Ok(_) => {}
             Err(AppError::RoleLinkNotFound) => {
                 delete_orphan_role_link(guild_id, role_id, pool).await;
@@ -348,22 +390,23 @@ pub async fn sync_for_role_link(
             Err(e) => return Err(e),
         }
         sqlx::query("DELETE FROM role_assignments WHERE guild_id = $1 AND role_id = $2")
-            .bind(guild_id).bind(role_id)
-            .execute(pool).await?;
+            .bind(guild_id)
+            .bind(role_id)
+            .execute(pool)
+            .await?;
         return Ok(());
     }
 
-    let (_user_count, user_limit) = match rl_client
-        .get_user_info(guild_id, role_id, &api_token)
-        .await
-    {
-        Ok(v) => v,
-        Err(AppError::RoleLinkNotFound) => {
-            delete_orphan_role_link(guild_id, role_id, pool).await;
-            return Ok(());
-        }
-        Err(_) => (0, 100),
-    };
+    let (_user_count, user_limit) =
+        match rl_client.get_user_info(guild_id, role_id, &api_token).await {
+            Ok(v) => v,
+            Err(AppError::RoleLinkNotFound) => {
+                delete_orphan_role_link(guild_id, role_id, pool).await;
+                return Ok(());
+            }
+            Err(AppError::RoleLinkDisabled) => return Ok(()),
+            Err(e) => return Err(e),
+        };
 
     let member_ids = auth_gateway::fetch_guild_member_ids(
         &state.http,
@@ -374,7 +417,10 @@ pub async fn sync_for_role_link(
     .await?;
 
     if member_ids.is_empty() {
-        match rl_client.upload_users(guild_id, role_id, &[], &api_token).await {
+        match rl_client
+            .upload_users(guild_id, role_id, &[], &api_token)
+            .await
+        {
             Ok(_) => {}
             Err(AppError::RoleLinkNotFound) => {
                 delete_orphan_role_link(guild_id, role_id, pool).await;
@@ -384,8 +430,10 @@ pub async fn sync_for_role_link(
         }
         let mut tx = pool.begin().await?;
         sqlx::query("DELETE FROM role_assignments WHERE guild_id = $1 AND role_id = $2")
-            .bind(guild_id).bind(role_id)
-            .execute(&mut *tx).await?;
+            .bind(guild_id)
+            .bind(role_id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         return Ok(());
     }
@@ -419,7 +467,21 @@ pub async fn sync_for_role_link(
              ORDER BY la.linked_at ASC",
         );
 
-        let mut q = sqlx::query_as::<_, (String, String, serde_json::Value, serde_json::Value, i32, Option<chrono::DateTime<chrono::Utc>>, i32, bool, bool, String)>(&query_str);
+        let mut q = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                serde_json::Value,
+                serde_json::Value,
+                i32,
+                Option<chrono::DateTime<chrono::Utc>>,
+                i32,
+                bool,
+                bool,
+                String,
+            ),
+        >(&query_str);
         for bind in &binds {
             q = match bind {
                 ConditionBind::Int(v) => q.bind(*v),
@@ -432,13 +494,23 @@ pub async fn sync_for_role_link(
         let candidates = q.fetch_all(pool).await?;
 
         // Collect app_ids needed
-        let needed_app_ids: HashSet<String> = conditions
-            .iter()
-            .filter_map(|c| c.app_id.clone())
-            .collect();
+        let needed_app_ids: HashSet<String> =
+            conditions.iter().filter_map(|c| c.app_id.clone()).collect();
 
         let mut qualifying_ids: Vec<String> = Vec::new();
-        for (discord_id, steam_id, owned_games, groups, steam_level, account_created, total_games_owned, is_vac_banned, is_game_banned, country_code) in candidates {
+        for (
+            discord_id,
+            steam_id,
+            owned_games,
+            groups,
+            steam_level,
+            account_created,
+            total_games_owned,
+            is_vac_banned,
+            is_game_banned,
+            country_code,
+        ) in candidates
+        {
             let uc = UserCacheRow {
                 steam_id: steam_id.clone(),
                 owned_games,
@@ -482,7 +554,10 @@ pub async fn sync_for_role_link(
         }
 
         // Atomic replace (uses chunked upload if > 100k)
-        match rl_client.upload_users(guild_id, role_id, &qualifying_ids, &api_token).await {
+        match rl_client
+            .upload_users(guild_id, role_id, &qualifying_ids, &api_token)
+            .await
+        {
             Ok(_) => {}
             Err(AppError::RoleLinkNotFound) => {
                 delete_orphan_role_link(guild_id, role_id, pool).await;
@@ -493,15 +568,20 @@ pub async fn sync_for_role_link(
 
         let mut tx = pool.begin().await?;
         sqlx::query("DELETE FROM role_assignments WHERE guild_id = $1 AND role_id = $2")
-            .bind(guild_id).bind(role_id)
-            .execute(&mut *tx).await?;
+            .bind(guild_id)
+            .bind(role_id)
+            .execute(&mut *tx)
+            .await?;
         if !qualifying_ids.is_empty() {
             sqlx::query(
                 "INSERT INTO role_assignments (guild_id, role_id, discord_id) \
                  SELECT $1, $2, UNNEST($3::text[])",
             )
-            .bind(guild_id).bind(role_id).bind(&qualifying_ids)
-            .execute(&mut *tx).await?;
+            .bind(guild_id)
+            .bind(role_id)
+            .bind(&qualifying_ids)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
     } else {
@@ -518,9 +598,13 @@ pub async fn sync_for_role_link(
              LIMIT ${limit_bind_idx}",
         );
 
-        let qualifying_ids = exec_condition_query(&query_str, &binds, &member_ids, user_limit, pool).await?;
+        let qualifying_ids =
+            exec_condition_query(&query_str, &binds, &member_ids, user_limit, pool).await?;
 
-        match rl_client.upload_users(guild_id, role_id, &qualifying_ids, &api_token).await {
+        match rl_client
+            .upload_users(guild_id, role_id, &qualifying_ids, &api_token)
+            .await
+        {
             Ok(_) => {}
             Err(AppError::RoleLinkNotFound) => {
                 delete_orphan_role_link(guild_id, role_id, pool).await;
@@ -531,15 +615,20 @@ pub async fn sync_for_role_link(
 
         let mut tx = pool.begin().await?;
         sqlx::query("DELETE FROM role_assignments WHERE guild_id = $1 AND role_id = $2")
-            .bind(guild_id).bind(role_id)
-            .execute(&mut *tx).await?;
+            .bind(guild_id)
+            .bind(role_id)
+            .execute(&mut *tx)
+            .await?;
         if !qualifying_ids.is_empty() {
             sqlx::query(
                 "INSERT INTO role_assignments (guild_id, role_id, discord_id) \
                  SELECT $1, $2, UNNEST($3::text[])",
             )
-            .bind(guild_id).bind(role_id).bind(&qualifying_ids)
-            .execute(&mut *tx).await?;
+            .bind(guild_id)
+            .bind(role_id)
+            .bind(&qualifying_ids)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
     }
@@ -582,13 +671,21 @@ pub async fn remove_all_assignments(discord_id: &str, state: &AppState) -> Resul
     .await?;
 
     for (guild_id, role_id, api_token) in &assignments {
-        match rl_client.remove_user(guild_id, role_id, discord_id, api_token).await {
+        match rl_client
+            .remove_user(guild_id, role_id, discord_id, api_token)
+            .await
+        {
             Ok(_) => {}
             Err(AppError::RoleLinkNotFound) => {
                 delete_orphan_role_link(guild_id, role_id, pool).await;
             }
             Err(e) => {
-                tracing::error!(guild_id, role_id, discord_id, "Failed to remove user during unlink: {e}");
+                tracing::error!(
+                    guild_id,
+                    role_id,
+                    discord_id,
+                    "Failed to remove user during unlink: {e}"
+                );
             }
         }
     }

@@ -50,10 +50,11 @@ fn evaluate_single(
             };
             let app_id_num: i64 = app_id.parse().unwrap_or(0);
             let expected = condition.value.as_bool().unwrap_or(true);
-            let owns = uc
-                .owned_games
-                .as_array()
-                .is_some_and(|games| games.iter().any(|g| g["appid"].as_i64() == Some(app_id_num)));
+            let owns = uc.owned_games.as_array().is_some_and(|games| {
+                games
+                    .iter()
+                    .any(|g| g["appid"].as_i64() == Some(app_id_num))
+            });
             owns == expected
         }
         ConditionField::GamePlaytime => {
@@ -74,7 +75,12 @@ fn evaluate_single(
                 .unwrap_or(0);
             let playtime_hours = playtime_minutes / 60;
             let expected = condition.value.as_i64().unwrap_or(0);
-            compare(playtime_hours, expected, &condition.operator, &condition.value_end)
+            compare(
+                playtime_hours,
+                expected,
+                &condition.operator,
+                &condition.value_end,
+            )
         }
         ConditionField::RecentPlaytime => {
             let app_id = match &condition.app_id {
@@ -94,7 +100,12 @@ fn evaluate_single(
                 .unwrap_or(0);
             let playtime_hours = playtime_minutes / 60;
             let expected = condition.value.as_i64().unwrap_or(0);
-            compare(playtime_hours, expected, &condition.operator, &condition.value_end)
+            compare(
+                playtime_hours,
+                expected,
+                &condition.operator,
+                &condition.value_end,
+            )
         }
         ConditionField::AchievementCount => {
             let app_id = match &condition.app_id {
@@ -106,7 +117,12 @@ fn evaluate_single(
                 .map(|a| a.unlocked_count as i64)
                 .unwrap_or(0);
             let expected = condition.value.as_i64().unwrap_or(0);
-            compare(unlocked, expected, &condition.operator, &condition.value_end)
+            compare(
+                unlocked,
+                expected,
+                &condition.operator,
+                &condition.value_end,
+            )
         }
         ConditionField::AchievementPercent => {
             let app_id = match &condition.app_id {
@@ -149,9 +165,7 @@ fn evaluate_single(
         ConditionField::AccountAgeDays => {
             let actual = uc
                 .account_created
-                .map(|created| {
-                    (chrono::Utc::now() - created).num_days()
-                })
+                .map(|created| (chrono::Utc::now() - created).num_days())
                 .unwrap_or(0);
             let expected = condition.value.as_i64().unwrap_or(0);
             compare(actual, expected, &condition.operator, &condition.value_end)
@@ -173,9 +187,7 @@ fn evaluate_single(
             let target_gid = condition.value.as_str().unwrap_or("");
             uc.groups
                 .as_array()
-                .is_some_and(|groups| {
-                    groups.iter().any(|g| g["gid"].as_str() == Some(target_gid))
-                })
+                .is_some_and(|groups| groups.iter().any(|g| g["gid"].as_str() == Some(target_gid)))
         }
         ConditionField::CountryCode => {
             let expected = condition.value.as_str().unwrap_or("");
@@ -254,7 +266,11 @@ mod tests {
             value_end: None,
             app_id: Some("730".to_string()),
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -266,7 +282,11 @@ mod tests {
             value_end: None,
             app_id: Some("999999".to_string()),
         }];
-        assert!(!evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(!evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -279,7 +299,11 @@ mod tests {
             value_end: None,
             app_id: Some("730".to_string()),
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -291,7 +315,11 @@ mod tests {
             value_end: None,
             app_id: None,
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -303,7 +331,11 @@ mod tests {
             value_end: None,
             app_id: None,
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -315,7 +347,11 @@ mod tests {
             value_end: None,
             app_id: None,
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -327,7 +363,11 @@ mod tests {
             value_end: None,
             app_id: None,
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -339,7 +379,11 @@ mod tests {
             value_end: None,
             app_id: Some("730".to_string()),
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -351,7 +395,11 @@ mod tests {
             value_end: None,
             app_id: Some("730".to_string()),
         }];
-        assert!(!evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(!evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -364,7 +412,11 @@ mod tests {
             value_end: None,
             app_id: Some("730".to_string()),
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -376,7 +428,11 @@ mod tests {
             value_end: Some(json!(30)),
             app_id: None,
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -389,7 +445,11 @@ mod tests {
             value_end: None,
             app_id: None,
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -401,13 +461,21 @@ mod tests {
             value_end: None,
             app_id: None,
         }];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
     fn test_empty_conditions() {
         let conditions: Vec<Condition> = vec![];
-        assert!(!evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(!evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 
     #[test]
@@ -428,6 +496,10 @@ mod tests {
                 app_id: None,
             },
         ];
-        assert!(evaluate_conditions(&conditions, &sample_user_cache(), &sample_achievements()));
+        assert!(evaluate_conditions(
+            &conditions,
+            &sample_user_cache(),
+            &sample_achievements()
+        ));
     }
 }

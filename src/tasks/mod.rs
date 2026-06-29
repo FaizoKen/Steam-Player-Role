@@ -11,10 +11,9 @@ pub async fn cleanup_expired(state: Arc<AppState>) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(300)).await;
 
-        if let Err(e) =
-            sqlx::query("DELETE FROM verification_sessions WHERE expires_at < now()")
-                .execute(&state.pool)
-                .await
+        if let Err(e) = sqlx::query("DELETE FROM verification_sessions WHERE expires_at < now()")
+            .execute(&state.pool)
+            .await
         {
             tracing::error!("Failed to clean up verification sessions: {e}");
         }

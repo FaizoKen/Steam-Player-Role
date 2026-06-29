@@ -74,26 +74,22 @@ pub async fn get_config(
             String,
             sqlx::types::Json<Vec<crate::models::condition::Condition>>,
         ),
-    >(
-        "SELECT guild_id, conditions FROM role_links WHERE api_token = $1",
-    )
+    >("SELECT guild_id, conditions FROM role_links WHERE api_token = $1")
     .bind(&token)
     .fetch_optional(&state.pool)
     .await?
     .ok_or(AppError::Unauthorized)?;
 
-    let view_permission: String = sqlx::query_scalar(
-        "SELECT view_permission FROM guild_settings WHERE guild_id = $1",
-    )
-    .bind(&link.0)
-    .fetch_optional(&state.pool)
-    .await?
-    .unwrap_or_else(|| "members".to_string());
+    let view_permission: String =
+        sqlx::query_scalar("SELECT view_permission FROM guild_settings WHERE guild_id = $1")
+            .bind(&link.0)
+            .fetch_optional(&state.pool)
+            .await?
+            .unwrap_or_else(|| "members".to_string());
 
     let verify_url = format!("{}/verify?guild={}", state.config.base_url, link.0);
     let players_url = format!("{}/players/{}", state.config.base_url, link.0);
-    let schema =
-        schema::build_config_schema(&link.1, &verify_url, &players_url, &view_permission);
+    let schema = schema::build_config_schema(&link.1, &verify_url, &players_url, &view_permission);
 
     Ok(Json(schema))
 }
@@ -172,10 +168,13 @@ pub async fn post_config(
         "Config updated"
     );
 
-    let _ = state.config_sync_tx.send(ConfigSyncEvent {
-        guild_id: body.guild_id,
-        role_id: body.role_id,
-    }).await;
+    let _ = state
+        .config_sync_tx
+        .send(ConfigSyncEvent {
+            guild_id: body.guild_id,
+            role_id: body.role_id,
+        })
+        .await;
 
     Ok(Json(serde_json::json!({"success": true})))
 }

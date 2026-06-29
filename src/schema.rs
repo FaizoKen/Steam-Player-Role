@@ -57,11 +57,19 @@ pub fn build_config_schema(
     let operator_key = c.map(|c| c.operator.key()).unwrap_or("gte");
     values.insert(
         "operator_game".to_string(),
-        json!(if category == "game" { operator_key } else { "gte" }),
+        json!(if category == "game" {
+            operator_key
+        } else {
+            "gte"
+        }),
     );
     values.insert(
         "operator_account".to_string(),
-        json!(if category == "account" { operator_key } else { "gte" }),
+        json!(if category == "account" {
+            operator_key
+        } else {
+            "gte"
+        }),
     );
     values.insert("view_permission".to_string(), json!(view_permission));
 
@@ -408,15 +416,27 @@ pub fn parse_config(config: &HashMap<String, Value>) -> Result<Vec<Condition>, A
 
     let (field_key, operator_key, num_key, end_key, bool_key) = match category {
         "game" => (
-            config.get("condition_field_game").and_then(|v| v.as_str()).unwrap_or(""),
-            config.get("operator_game").and_then(|v| v.as_str()).unwrap_or(""),
+            config
+                .get("condition_field_game")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            config
+                .get("operator_game")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
             "value_num_game",
             "value_end_game",
             "value_bool_game",
         ),
         "account" => (
-            config.get("condition_field_account").and_then(|v| v.as_str()).unwrap_or(""),
-            config.get("operator_account").and_then(|v| v.as_str()).unwrap_or(""),
+            config
+                .get("condition_field_account")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+            config
+                .get("operator_account")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
             "value_num_account",
             "value_end_account",
             "value_bool_account",
@@ -500,7 +520,10 @@ pub fn parse_config(config: &HashMap<String, Value>) -> Result<Vec<Condition>, A
     } else {
         let raw = config.get(num_key);
         let n = raw
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .ok_or_else(|| AppError::BadRequest("Numeric value is required".into()))?;
         Value::Number(n.into())
     };
@@ -508,7 +531,10 @@ pub fn parse_config(config: &HashMap<String, Value>) -> Result<Vec<Condition>, A
     let value_end = if operator == ConditionOperator::Between {
         let raw = config.get(end_key);
         let n = raw
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .ok_or_else(|| {
                 AppError::BadRequest("End value is required for the between operator".into())
             })?;

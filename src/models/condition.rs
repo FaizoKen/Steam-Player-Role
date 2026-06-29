@@ -22,11 +22,17 @@ pub enum ConditionField {
 
 impl ConditionField {
     pub fn is_boolean(&self) -> bool {
-        matches!(self, Self::OwnsGame | Self::IsVACBanned | Self::IsGameBanned)
+        matches!(
+            self,
+            Self::OwnsGame | Self::IsVACBanned | Self::IsGameBanned
+        )
     }
 
     pub fn is_string_exact(&self) -> bool {
-        matches!(self, Self::HasAchievement | Self::InGroup | Self::CountryCode)
+        matches!(
+            self,
+            Self::HasAchievement | Self::InGroup | Self::CountryCode
+        )
     }
 
     pub fn is_numeric(&self) -> bool {

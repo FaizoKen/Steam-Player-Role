@@ -465,11 +465,15 @@ pub async fn callback(
 
     let steam_id = claimed_id
         .strip_prefix("https://steamcommunity.com/openid/id/")
-        .ok_or(AppError::VerificationFailed("Invalid claimed_id format".into()))?;
+        .ok_or(AppError::VerificationFailed(
+            "Invalid claimed_id format".into(),
+        ))?;
 
     // Validate: must be numeric SteamID64
     if steam_id.len() != 17 || !steam_id.chars().all(|c| c.is_ascii_digit()) {
-        return Err(AppError::VerificationFailed("Invalid SteamID format".into()));
+        return Err(AppError::VerificationFailed(
+            "Invalid SteamID format".into(),
+        ));
     }
 
     // Verify the response with Steam's check_authentication endpoint
@@ -477,13 +481,31 @@ pub async fn callback(
         ("openid.ns", query.openid_ns.as_deref().unwrap_or("")),
         ("openid.mode", "check_authentication"),
         ("openid.sig", query.openid_sig.as_deref().unwrap_or("")),
-        ("openid.signed", query.openid_signed.as_deref().unwrap_or("")),
-        ("openid.assoc_handle", query.openid_assoc_handle.as_deref().unwrap_or("")),
-        ("openid.op_endpoint", query.openid_op_endpoint.as_deref().unwrap_or("")),
+        (
+            "openid.signed",
+            query.openid_signed.as_deref().unwrap_or(""),
+        ),
+        (
+            "openid.assoc_handle",
+            query.openid_assoc_handle.as_deref().unwrap_or(""),
+        ),
+        (
+            "openid.op_endpoint",
+            query.openid_op_endpoint.as_deref().unwrap_or(""),
+        ),
         ("openid.claimed_id", claimed_id),
-        ("openid.identity", query.openid_identity.as_deref().unwrap_or("")),
-        ("openid.response_nonce", query.openid_response_nonce.as_deref().unwrap_or("")),
-        ("openid.return_to", query.openid_return_to.as_deref().unwrap_or("")),
+        (
+            "openid.identity",
+            query.openid_identity.as_deref().unwrap_or(""),
+        ),
+        (
+            "openid.response_nonce",
+            query.openid_response_nonce.as_deref().unwrap_or(""),
+        ),
+        (
+            "openid.return_to",
+            query.openid_return_to.as_deref().unwrap_or(""),
+        ),
     ];
 
     let resp = state
@@ -492,7 +514,9 @@ pub async fn callback(
         .form(&verify_params)
         .send()
         .await
-        .map_err(|e| AppError::VerificationFailed(format!("Steam verification request failed: {e}")))?;
+        .map_err(|e| {
+            AppError::VerificationFailed(format!("Steam verification request failed: {e}"))
+        })?;
 
     let body = resp
         .text()
@@ -540,7 +564,9 @@ pub async fn callback(
             let redirect_url = format!(
                 "{}/verify?error={}",
                 state.config.base_url,
-                urlencoding::encode("This Steam account is already linked to another Discord user.")
+                urlencoding::encode(
+                    "This Steam account is already linked to another Discord user."
+                )
             );
             return Ok(Redirect::temporary(&redirect_url).into_response());
         }
@@ -565,12 +591,10 @@ pub async fn callback(
     .await?;
 
     // Create initial user_cache entry
-    sqlx::query(
-        "INSERT INTO user_cache (steam_id) VALUES ($1) ON CONFLICT (steam_id) DO NOTHING",
-    )
-    .bind(steam_id)
-    .execute(&state.pool)
-    .await?;
+    sqlx::query("INSERT INTO user_cache (steam_id) VALUES ($1) ON CONFLICT (steam_id) DO NOTHING")
+        .bind(steam_id)
+        .execute(&state.pool)
+        .await?;
 
     // Clean up verification session
     sqlx::query("DELETE FROM verification_sessions WHERE discord_id = $1")

@@ -382,9 +382,9 @@ async fn auth_gateway_get(
         )));
     }
 
-    resp.json::<Value>().await.map_err(|e| {
-        AppError::Internal(format!("Auth Gateway parse error: {e}"))
-    })
+    resp.json::<Value>()
+        .await
+        .map_err(|e| AppError::Internal(format!("Auth Gateway parse error: {e}")))
 }
 
 async fn fetch_guild_permission(
@@ -398,8 +398,14 @@ async fn fetch_guild_permission(
     );
     let body = auth_gateway_get(state, &path, session_cookie_value).await?;
 
-    let is_member = body.get("is_member").and_then(|v| v.as_bool()).unwrap_or(false);
-    let is_manager = body.get("is_manager").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_member = body
+        .get("is_member")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let is_manager = body
+        .get("is_manager")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     Ok((is_member, is_manager))
 }
@@ -418,10 +424,17 @@ async fn fetch_guild_members(
     let discord_ids: Vec<String> = body
         .get("discord_ids")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
-    let guild_name = body.get("guild_name").and_then(|v| v.as_str()).map(String::from);
+    let guild_name = body
+        .get("guild_name")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     Ok((discord_ids, guild_name))
 }
@@ -438,8 +451,8 @@ pub async fn players_data(
 
     let cookie_value = session_cookie.value();
 
-    let (_viewer_discord_id, _) =
-        verify_session(cookie_value, &state.config.session_secret).ok_or_else(|| {
+    let (_viewer_discord_id, _) = verify_session(cookie_value, &state.config.session_secret)
+        .ok_or_else(|| {
             AppError::UnauthorizedWith("Session verification failed. Please re-login.".into())
         })?;
 
@@ -464,8 +477,7 @@ pub async fn players_data(
     }
     let members_allowed = view_permission == "members";
 
-    let (_, is_manager) =
-        fetch_guild_permission(&state, &guild_id, session_cookie.value()).await?;
+    let (_, is_manager) = fetch_guild_permission(&state, &guild_id, session_cookie.value()).await?;
 
     let (member_ids, ag_guild_name) =
         fetch_guild_members(&state, &guild_id, session_cookie.value()).await?;
