@@ -10,6 +10,9 @@ pub enum AppError {
     #[error("Steam API error: {0}")]
     SteamApi(String),
 
+    #[error("Steam API budget exhausted; retry in {retry_after_secs}s")]
+    QuotaExhausted { retry_after_secs: u64 },
+
     #[error("RoleLogic API error: {0}")]
     RoleLogic(String),
 
@@ -25,6 +28,9 @@ pub enum AppError {
     #[error("Invalid request: {0}")]
     BadRequest(String),
 
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
+
     #[error("Unauthorized")]
     Unauthorized,
 
@@ -36,6 +42,9 @@ pub enum AppError {
 
     #[error("Not found: {0}")]
     NotFound(String),
+
+    #[error("Configuration was changed in another tab")]
+    StaleVersion,
 
     #[error("Verification failed: {0}")]
     VerificationFailed(String),
@@ -58,6 +67,13 @@ impl IntoResponse for AppError {
                     "Failed to fetch Steam data. Please try again later.",
                 )
             }
+            AppError::QuotaExhausted { retry_after_secs } => {
+                tracing::warn!(retry_after_secs, "Steam API budget exhausted");
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Steam data checks are temporarily rate-limited. Please try again later.",
+                )
+            }
             AppError::RoleLogic(e) => {
                 tracing::error!("RoleLogic API error: {e}");
                 (StatusCode::BAD_GATEWAY, "Failed to sync roles")
@@ -69,12 +85,17 @@ impl IntoResponse for AppError {
                 (StatusCode::FORBIDDEN, "Role link user limit reached")
             }
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.as_str()),
+            AppError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg.as_str()),
             AppError::Unauthorized => {
                 (StatusCode::UNAUTHORIZED, "Invalid or missing authorization")
             }
             AppError::UnauthorizedWith(msg) => (StatusCode::UNAUTHORIZED, msg.as_str()),
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.as_str()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.as_str()),
+            AppError::StaleVersion => (
+                StatusCode::CONFLICT,
+                "This configuration was changed in another tab. Reload to get the latest, then re-apply your edit.",
+            ),
             AppError::VerificationFailed(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.as_str()),
             AppError::Internal(e) => {
                 tracing::error!("Internal error: {e}");

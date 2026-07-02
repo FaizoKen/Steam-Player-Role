@@ -9,7 +9,6 @@ use serde_json::Value;
 
 use crate::error::AppError;
 use crate::schema;
-use crate::services::sync::ConfigSyncEvent;
 use crate::AppState;
 
 fn extract_token(headers: &HeaderMap) -> Result<String, AppError> {
@@ -68,39 +67,32 @@ pub async fn get_config(
 ) -> Result<Json<Value>, AppError> {
     let token = extract_token(&headers)?;
 
-    let link = sqlx::query_as::<
-        _,
-        (
-            String,
-            sqlx::types::Json<Vec<crate::models::condition::Condition>>,
-        ),
-    >("SELECT guild_id, conditions FROM role_links WHERE api_token = $1")
+    let link = sqlx::query_as::<_, (String, String)>(
+        "SELECT guild_id, role_id FROM role_links WHERE api_token = $1",
+    )
     .bind(&token)
     .fetch_optional(&state.pool)
     .await?
     .ok_or(AppError::Unauthorized)?;
 
-    let view_permission: String =
-        sqlx::query_scalar("SELECT view_permission FROM guild_settings WHERE guild_id = $1")
-            .bind(&link.0)
-            .fetch_optional(&state.pool)
-            .await?
-            .unwrap_or_else(|| "members".to_string());
-
-    let verify_url = format!("{}/verify?guild={}", state.config.base_url, link.0);
-    let players_url = format!("{}/players/{}", state.config.base_url, link.0);
-    let schema = schema::build_config_schema(&link.1, &verify_url, &players_url, &view_permission);
-
-    Ok(Json(schema))
+    Ok(Json(schema::build_iframe_config(
+        &state.config.base_url,
+        &link.0,
+        &link.1,
+    )))
 }
 
 #[derive(Deserialize)]
 pub struct ConfigBody {
     pub guild_id: String,
     pub role_id: String,
+    #[allow(dead_code)] // iframe mode: config edits arrive via /admin routes
     pub config: HashMap<String, Value>,
 }
 
+/// Contract-compliance stub: iframe-mode plugins never receive POST /config
+/// from a current RoleLogic backend (edits go through the /admin routes),
+/// but the token is still verified so a stale call can't ping silently.
 pub async fn post_config(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -122,61 +114,13 @@ pub async fn post_config(
         return Err(AppError::Unauthorized);
     }
 
-    let conditions = schema::parse_config(&body.config)?;
-
-    let view_permission = body
-        .config
-        .get("view_permission")
-        .and_then(|v| v.as_str())
-        .unwrap_or("members")
-        .to_string();
-    if view_permission != "members" && view_permission != "managers" {
-        return Err(AppError::BadRequest(
-            "view_permission must be 'members' or 'managers'".into(),
-        ));
-    }
-
-    let mut tx = state.pool.begin().await?;
-
-    sqlx::query(
-        "UPDATE role_links SET conditions = $1, updated_at = now() \
-         WHERE guild_id = $2 AND role_id = $3",
-    )
-    .bind(sqlx::types::Json(&conditions))
-    .bind(&body.guild_id)
-    .bind(&body.role_id)
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query(
-        "INSERT INTO guild_settings (guild_id, view_permission, updated_at) \
-         VALUES ($1, $2, now()) \
-         ON CONFLICT (guild_id) \
-         DO UPDATE SET view_permission = EXCLUDED.view_permission, updated_at = now()",
-    )
-    .bind(&body.guild_id)
-    .bind(&view_permission)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-
     tracing::info!(
         guild_id = body.guild_id,
         role_id = body.role_id,
-        count = conditions.len(),
-        "Config updated"
+        "POST /config received in iframe mode — accepted as no-op"
     );
 
-    let _ = state
-        .config_sync_tx
-        .send(ConfigSyncEvent {
-            guild_id: body.guild_id,
-            role_id: body.role_id,
-        })
-        .await;
-
-    Ok(Json(serde_json::json!({"success": true})))
+    Ok(Json(schema::accept_empty_config()))
 }
 
 #[derive(Deserialize)]

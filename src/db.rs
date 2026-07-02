@@ -22,4 +22,24 @@ pub async fn run_migrations(pool: &PgPool) {
         .execute(pool)
         .await
         .expect("Failed to run migration 002");
+
+    sqlx::raw_sql(include_str!("../migrations/003_library_visibility.sql"))
+        .execute(pool)
+        .await
+        .expect("Failed to run migration 003");
+
+    sqlx::raw_sql(include_str!("../migrations/004_publisher_ownership.sql"))
+        .execute(pool)
+        .await
+        .expect("Failed to run migration 004");
+
+    sqlx::raw_sql(include_str!("../migrations/005_quota_and_scale.sql"))
+        .execute(pool)
+        .await
+        .expect("Failed to run migration 005");
+
+    sqlx::raw_sql(include_str!("../migrations/006_config_version.sql"))
+        .execute(pool)
+        .await
+        .expect("Failed to run migration 006");
 }

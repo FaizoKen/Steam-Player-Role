@@ -22,25 +22,39 @@ pub struct GameAchievementRow {
     pub achievements: serde_json::Value,
 }
 
+/// Row from app_ownership_cache table (partner-API CheckAppOwnership)
+pub struct AppOwnershipRow {
+    pub owns_app: bool,
+    pub permanent: bool,
+    pub owner_steam_id: String,
+}
+
 /// Evaluate all conditions against cached data. All must pass (AND logic).
 /// An empty condition list is treated as "unconfigured" and grants no role.
+///
+/// `publisher_ownership` must only be `Some` for role links that have a
+/// publisher key configured — OwnsGame then prefers the partner-API result
+/// (keyed by app_id) over the public library, falling back to the library
+/// for apps not yet cached.
 pub fn evaluate_conditions(
     conditions: &[Condition],
     user_cache: &UserCacheRow,
     game_achievements: &HashMap<String, GameAchievementRow>,
+    publisher_ownership: Option<&HashMap<String, AppOwnershipRow>>,
 ) -> bool {
     if conditions.is_empty() {
         return false;
     }
     conditions
         .iter()
-        .all(|c| evaluate_single(c, user_cache, game_achievements))
+        .all(|c| evaluate_single(c, user_cache, game_achievements, publisher_ownership))
 }
 
 fn evaluate_single(
     condition: &Condition,
     uc: &UserCacheRow,
     achievements: &HashMap<String, GameAchievementRow>,
+    publisher_ownership: Option<&HashMap<String, AppOwnershipRow>>,
 ) -> bool {
     match &condition.field {
         ConditionField::OwnsGame => {
@@ -48,13 +62,22 @@ fn evaluate_single(
                 Some(id) => id,
                 None => return false,
             };
-            let app_id_num: i64 = app_id.parse().unwrap_or(0);
             let expected = condition.value.as_bool().unwrap_or(true);
-            let owns = uc.owned_games.as_array().is_some_and(|games| {
-                games
-                    .iter()
-                    .any(|g| g["appid"].as_i64() == Some(app_id_num))
-            });
+            let owns = match publisher_ownership.and_then(|m| m.get(app_id.as_str())) {
+                // Partner-API result: works with private libraries. The
+                // license must belong to the linked account (excludes
+                // Family Sharing) and be permanent (excludes free
+                // weekends / timed trials).
+                Some(o) => o.owns_app && o.permanent && o.owner_steam_id == uc.steam_id,
+                None => {
+                    let app_id_num: i64 = app_id.parse().unwrap_or(0);
+                    uc.owned_games.as_array().is_some_and(|games| {
+                        games
+                            .iter()
+                            .any(|g| g["appid"].as_i64() == Some(app_id_num))
+                    })
+                }
+            };
             owns == expected
         }
         ConditionField::GamePlaytime => {
@@ -269,7 +292,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -285,7 +309,8 @@ mod tests {
         assert!(!evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -302,7 +327,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -318,7 +344,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -334,7 +361,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -350,7 +378,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -366,7 +395,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -382,7 +412,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -398,7 +429,8 @@ mod tests {
         assert!(!evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -415,7 +447,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -431,7 +464,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -448,7 +482,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -464,7 +499,125 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
+        ));
+    }
+
+    /// Cache row as it looks for a user whose game details are private:
+    /// GetOwnedGames returned no games key, so the library is empty.
+    fn private_library_user_cache() -> UserCacheRow {
+        UserCacheRow {
+            owned_games: json!([]),
+            total_games_owned: 0,
+            ..sample_user_cache()
+        }
+    }
+
+    fn owns_game_condition(expected: bool) -> Vec<Condition> {
+        vec![Condition {
+            field: ConditionField::OwnsGame,
+            operator: ConditionOperator::Eq,
+            value: json!(expected),
+            value_end: None,
+            app_id: Some("730".to_string()),
+        }]
+    }
+
+    fn publisher_ownership(
+        owns_app: bool,
+        permanent: bool,
+        owner_steam_id: &str,
+    ) -> HashMap<String, AppOwnershipRow> {
+        let mut map = HashMap::new();
+        map.insert(
+            "730".to_string(),
+            AppOwnershipRow {
+                owns_app,
+                permanent,
+                owner_steam_id: owner_steam_id.to_string(),
+            },
+        );
+        map
+    }
+
+    #[test]
+    fn test_publisher_ownership_grants_despite_private_library() {
+        let ownership = publisher_ownership(true, true, "76561198012345678");
+        assert!(evaluate_conditions(
+            &owns_game_condition(true),
+            &private_library_user_cache(),
+            &sample_achievements(),
+            Some(&ownership)
+        ));
+    }
+
+    #[test]
+    fn test_publisher_ownership_overrides_stale_library() {
+        // Library still lists the game (stale cache) but the publisher
+        // check says the license is gone (refund/revocation).
+        let ownership = publisher_ownership(false, true, "76561198012345678");
+        assert!(!evaluate_conditions(
+            &owns_game_condition(true),
+            &sample_user_cache(),
+            &sample_achievements(),
+            Some(&ownership)
+        ));
+    }
+
+    #[test]
+    fn test_publisher_ownership_excludes_family_sharing() {
+        // Owned, but the license belongs to another account.
+        let ownership = publisher_ownership(true, true, "76561198099999999");
+        assert!(!evaluate_conditions(
+            &owns_game_condition(true),
+            &private_library_user_cache(),
+            &sample_achievements(),
+            Some(&ownership)
+        ));
+        // The inverted condition ("does NOT own") therefore matches.
+        assert!(evaluate_conditions(
+            &owns_game_condition(false),
+            &private_library_user_cache(),
+            &sample_achievements(),
+            Some(&ownership)
+        ));
+    }
+
+    #[test]
+    fn test_publisher_ownership_excludes_temporary_license() {
+        // Free weekend: ownsapp=true but permanent=false.
+        let ownership = publisher_ownership(true, false, "76561198012345678");
+        assert!(!evaluate_conditions(
+            &owns_game_condition(true),
+            &private_library_user_cache(),
+            &sample_achievements(),
+            Some(&ownership)
+        ));
+    }
+
+    #[test]
+    fn test_publisher_ownership_missing_app_falls_back_to_library() {
+        // Publisher key configured but no cached result for this app yet —
+        // fall back to the public library, which has the game.
+        let ownership: HashMap<String, AppOwnershipRow> = HashMap::new();
+        assert!(evaluate_conditions(
+            &owns_game_condition(true),
+            &sample_user_cache(),
+            &sample_achievements(),
+            Some(&ownership)
+        ));
+    }
+
+    #[test]
+    fn test_no_publisher_key_ignores_ownership_data() {
+        // Without a publisher key the caller passes None; a private
+        // library means the game can't be seen, so no role.
+        assert!(!evaluate_conditions(
+            &owns_game_condition(true),
+            &private_library_user_cache(),
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -474,7 +627,8 @@ mod tests {
         assert!(!evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 
@@ -499,7 +653,8 @@ mod tests {
         assert!(evaluate_conditions(
             &conditions,
             &sample_user_cache(),
-            &sample_achievements()
+            &sample_achievements(),
+            None
         ));
     }
 }

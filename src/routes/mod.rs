@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod health;
 pub mod players;
 pub mod plugin;

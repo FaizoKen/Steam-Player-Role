@@ -42,13 +42,13 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
             .is_ok();
         (ok, start.elapsed().as_millis() as u64)
     };
-    let steam_check_url = format!(
-        "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key={}&steamids=0",
-        state.config.steam_api_key
-    );
-    let svc_fut = check_service(&state.http, "Steam Web API", &steam_check_url);
+    // Keyless reachability probe — a keyed call here would spend real quota
+    // on every monitoring poll, outside the governor's accounting.
+    let steam_check_url = "https://api.steampowered.com/ISteamWebAPIUtil/GetServerInfo/v1/";
+    let svc_fut = check_service(&state.http, "Steam Web API", steam_check_url);
 
     let ((db_ok, db_latency), svc_check) = tokio::join!(db_fut, svc_fut);
+    let quota = state.quota.snapshot().await;
 
     let svc_down = svc_check["status"] == "down";
     let status = match (db_ok, svc_down) {
@@ -65,6 +65,15 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
                 "status": if db_ok { "up" } else { "down" },
                 "latency_ms": db_latency
             }
+        },
+        "quota": {
+            "date": quota.date.to_string(),
+            "used": quota.used,
+            "remaining": quota.remaining(),
+            "total_budget": quota.total_budget,
+            "background_budget": quota.background_budget,
+            "reset_in_secs": quota.reset_in_secs,
+            "throttled": quota.throttled
         },
         "services": [svc_check]
     }))

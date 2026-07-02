@@ -16,6 +16,7 @@ mod schema;
 mod services;
 mod tasks;
 
+use services::quota::{PublisherQuotas, QuotaGovernor};
 use services::rolelogic::RoleLogicClient;
 use services::steam_api::SteamApiClient;
 use services::sync::{ConfigSyncEvent, PlayerSyncEvent};
@@ -28,8 +29,15 @@ pub struct AppState {
     pub steam_client: SteamApiClient,
     pub rl_client: RoleLogicClient,
     pub http: reqwest::Client,
+    /// Central daily-quota budget + pacing for our Steam Web API key.
+    pub quota: std::sync::Arc<QuotaGovernor>,
+    /// Per-publisher-key governors for CheckAppOwnership calls.
+    pub publisher_quotas: PublisherQuotas,
     pub verify_html: bytes::Bytes,
     pub players_html: bytes::Bytes,
+    /// Origins permitted to issue cookie-authenticated state-changing
+    /// requests (the per-handler `csrf::verify_origin` allowlist).
+    pub allowed_origins: Vec<String>,
 }
 
 #[tokio::main]
@@ -53,8 +61,24 @@ async fn main() {
     let (player_sync_tx, player_sync_rx) = mpsc::channel::<PlayerSyncEvent>(512);
     let (config_sync_tx, config_sync_rx) = mpsc::channel::<ConfigSyncEvent>(64);
 
-    let steam_client =
-        SteamApiClient::new(&app_config.steam_api_key, app_config.steam_api_rate_limit);
+    // Central quota governor — loads today's spend from the durable ledger so
+    // a restart resumes accounting instead of resetting to zero.
+    let quota = QuotaGovernor::new(
+        pool.clone(),
+        "main".to_string(),
+        app_config.steam_api_daily_quota,
+        app_config.quota_interactive_reserve,
+        app_config.quota_safety_fraction,
+    )
+    .await;
+    let publisher_quotas = PublisherQuotas::new(
+        pool.clone(),
+        app_config.steam_api_daily_quota,
+        app_config.quota_safety_fraction,
+    );
+
+    let refresh_workers = app_config.refresh_workers;
+    let steam_client = SteamApiClient::new(&app_config.steam_api_key, Arc::clone(&quota));
     let rl_client = RoleLogicClient::new();
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -66,6 +90,13 @@ async fn main() {
     let players_html =
         bytes::Bytes::from(routes::players::render_players_page(&app_config.base_url));
 
+    // Origins that can drive cookie-authenticated state changes (direct-nav
+    // admin writes). Iframe writes carry a Bearer token and skip this check.
+    let mut allowed_origins = vec![config::derive_origin(&app_config.base_url)];
+    if let Some(dash) = app_config.rl_dashboard_origin.as_deref() {
+        allowed_origins.push(dash.to_string());
+    }
+
     let state = Arc::new(AppState {
         pool,
         config: app_config,
@@ -74,11 +105,25 @@ async fn main() {
         steam_client,
         rl_client,
         http,
+        quota: Arc::clone(&quota),
+        publisher_quotas,
         verify_html,
         players_html,
+        allowed_origins,
     });
 
-    tokio::spawn(tasks::refresh_worker::run(Arc::clone(&state)));
+    // Persist the quota ledger on an interval.
+    tokio::spawn(Arc::clone(&quota).run_flusher());
+
+    // Background refresh workers, partitioned by hashtext(steam_id) % N so
+    // they never double-process. They share the one governor's budget.
+    for worker_id in 0..refresh_workers {
+        tokio::spawn(tasks::refresh_worker::run(
+            Arc::clone(&state),
+            worker_id,
+            refresh_workers,
+        ));
+    }
     tokio::spawn(tasks::player_sync_worker::run(
         player_sync_rx,
         Arc::clone(&state),
@@ -98,6 +143,29 @@ async fn main() {
                 .route("/config", get(routes::plugin::get_config))
                 .route("/config", post(routes::plugin::post_config))
                 .route("/config", delete(routes::plugin::delete_config))
+                // Iframe role-config (embedded by the RoleLogic dashboard)
+                .route(
+                    "/admin/{guild_id}/role/{role_id}",
+                    get(routes::admin::role_config_page),
+                )
+                .route(
+                    "/admin/{guild_id}/role/{role_id}/data",
+                    get(routes::admin::role_config_data),
+                )
+                .route(
+                    "/admin/{guild_id}/role/{role_id}/save",
+                    post(routes::admin::role_config_save),
+                )
+                .route(
+                    "/admin/{guild_id}/role/{role_id}/preview",
+                    get(routes::admin::role_config_preview)
+                        .post(routes::admin::role_config_preview_edit),
+                )
+                // Per-guild settings (players-list visibility)
+                .route(
+                    "/admin/{guild_id}/view-permission",
+                    post(routes::admin::set_view_permission),
+                )
                 // Verification endpoints (user-facing)
                 .route("/verify", get(routes::verification::verify_page))
                 .route("/verify/login", get(routes::verification::login))
@@ -105,6 +173,7 @@ async fn main() {
                 .route("/verify/steam", get(routes::verification::steam_login))
                 .route("/verify/callback", get(routes::verification::callback))
                 .route("/verify/unlink", post(routes::verification::unlink))
+                .route("/verify/recheck", post(routes::verification::recheck))
                 .route("/verify/logout", post(routes::verification::logout))
                 // Player list (public)
                 .route("/players/{guild_id}", get(routes::players::players_page))

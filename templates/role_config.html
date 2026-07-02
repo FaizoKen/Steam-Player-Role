@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steam Player Roles</title>
+<link rel="icon" href="__BASE_URL__/favicon.ico">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0f1115; color:#e8eaed;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    font-size:14px; line-height:1.5; padding:24px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  .sub { color:#8a93a4; font-size:13px; margin:0 0 22px; }
+  .q { font-weight:700; font-size:14px; margin:0 0 9px; }
+  /* compact responsive grid of choices */
+  .opts { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr));
+    gap:7px; margin-bottom:10px; }
+  .opt { display:flex; gap:8px; align-items:flex-start;
+    border:1px solid #262b36; border-radius:8px; padding:8px 10px;
+    cursor:pointer; background:#14171f; transition:border-color .1s; }
+  .opt:hover { border-color:#3a4150; }
+  .opt.sel { border-color:#66c0f4; background:#121e2a; }
+  .opt input { margin:1px 0 0; accent-color:#66c0f4; flex:none; }
+  .opt .t { font-weight:600; font-size:12.5px; line-height:1.25; }
+  .opt .d { color:#8a93a4; font-size:11px; line-height:1.3; margin-top:1px; }
+  .extra { margin:0 0 6px; }
+  .inline { color:#cfd6e4; font-size:13px; padding:9px 11px;
+    border:1px solid #262b36; border-radius:8px; background:#14171f; margin-bottom:7px; }
+  .inline input[type=number] { width:80px; }
+  .inline input { background:#0b0d12; color:#e8eaed;
+    border:1px solid #2a2f3a; border-radius:6px; padding:5px 7px; font-size:13px; }
+  .inline .hint { display:block; margin-top:4px; }
+  select, input[type=text], input[type=number], input[type=password] { background:#0b0d12; color:#e8eaed;
+    border:1px solid #2a2f3a; border-radius:6px; padding:8px 10px; font-size:13px; }
+  select:focus, input:focus { outline:1px solid #66c0f4; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button { background:#262b36; color:#e8eaed; border:0; border-radius:7px;
+    padding:8px 13px; font-size:13px; font-weight:600; cursor:pointer; }
+  button:hover { background:#313845; }
+  button.primary { background:#66c0f4; color:#06131d; padding:11px 22px; font-size:14px; }
+  button.primary:hover { background:#57b2e8; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button:disabled:hover { background:#262b36; }
+  button.primary:disabled:hover { background:#66c0f4; }
+  /* publisher key (optional, tucked away) */
+  .pk { border:1px solid #262b36; border-radius:8px; background:#14171f;
+    padding:8px 11px; margin-bottom:7px; }
+  .pk summary { cursor:pointer; color:#8a93a4; font-size:12.5px; font-weight:600; }
+  .pk summary:hover { color:#c7d5e4; }
+  .pk input { width:100%; margin:8px 0 4px; }
+  .pk .hint { display:block; }
+  /* member link */
+  .share { background:#15202b; border:1px solid #1f3346; border-radius:10px;
+    padding:13px 15px; margin:22px 0; font-size:13px; color:#a9c3d8; }
+  .share b { color:#dbeafe; }
+  .copybox { display:flex; gap:8px; margin-top:9px; align-items:stretch; }
+  .copybox code { flex:1; min-width:0; background:#0b0d12; border:1px solid #234; border-radius:6px;
+    padding:8px 10px; font-size:12px; overflow:auto; white-space:nowrap; }
+  .copybox .btn-open { background:#262b36; color:#e8eaed; border:0; border-radius:7px;
+    padding:8px 13px; font-size:13px; font-weight:600; cursor:pointer;
+    text-decoration:none; display:inline-flex; align-items:center;
+    white-space:nowrap; flex:0 0 auto; }
+  .copybox .btn-open:hover { background:#313845; }
+  /* players-page block — server-wide setting */
+  .sup { background:#171b25; border:1px solid #2a2f3a; border-radius:10px;
+    padding:13px 15px; margin:14px 0; font-size:13px; color:#cfd6e4; }
+  .sup b { color:#e8eaed; }
+  .sup .vp { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+    gap:7px; margin-top:10px; }
+  .sup .vp label { display:flex; gap:8px; align-items:flex-start;
+    border:1px solid #262b36; border-radius:8px; padding:8px 10px;
+    cursor:pointer; background:#14171f; transition:border-color .1s; }
+  .sup .vp label:hover { border-color:#3a4150; }
+  .sup .vp label.sel { border-color:#66c0f4; background:#121e2a; }
+  .sup .vp input { margin:1px 0 0; accent-color:#66c0f4; flex:none; }
+  .sup .vp .t { font-weight:600; font-size:12.5px; line-height:1.25; }
+  .sup .vp .d { color:#8a93a4; font-size:11px; line-height:1.3; margin-top:1px; }
+  .sup .saved { color:#8fd4ff; font-size:11.5px; margin-left:8px; opacity:0; transition:opacity .15s; }
+  .sup .saved.show { opacity:1; }
+  /* advanced (single custom condition) */
+  .adv { margin:6px 0 0; }
+  .grp { border:1px solid #2a2f3a; border-radius:9px; padding:11px;
+    margin:8px 0; background:#13161e; }
+  .cond { display:flex; gap:7px; align-items:center; flex-wrap:wrap; padding:2px 0; }
+  .cond .vw { display:flex; gap:6px; align-items:center; }
+  .hint { color:#7a8497; font-size:11px; flex-basis:100%; margin-left:2px; }
+  /* footer */
+  .foot { display:flex; justify-content:space-between; align-items:center;
+    gap:14px; flex-wrap:wrap; margin-top:26px; padding-top:16px;
+    border-top:1px solid #232734; }
+  .foot-btns { display:flex; gap:10px; align-items:center; margin-left:auto; }
+  .count { color:#8a93a4; font-size:12.5px; }
+  .count .ok { color:#66c0f4; font-weight:600; }
+  .verr { color:#fbbf24; font-size:12px; flex-basis:100%; }
+  .toast { padding:10px 12px; border-radius:8px; font-size:13px; margin-top:12px; }
+  .toast.e { background:#2a1518; border:1px solid #5c2630; color:#f6b8c0; }
+  .hidden { display:none !important; }
+  /* Mobile / narrow iframe (Discord on a phone embeds this at ~360 px). */
+  @media (max-width: 560px) {
+    body { padding:16px 14px; font-size:14px; }
+    h1 { font-size:17px; }
+    .sub { margin-bottom:18px; }
+    .opts { grid-template-columns:1fr; gap:6px; }
+    .opt { padding:9px 11px; }
+    .inline { font-size:13px; padding:9px 11px; }
+    .inline input[type=number] { width:80px; }
+    select, input[type=text], input[type=number], input[type=password] { font-size:14px; padding:9px 10px; }
+    select { max-width:100%; width:100%; }
+    .row { gap:8px; }
+    .copybox { flex-wrap:wrap; gap:8px; }
+    .copybox code { flex:1 1 100%; white-space:normal; word-break:break-all; font-size:12px; }
+    .copybox .btn-open, .copybox button { flex:1 1 0; justify-content:center; }
+    .share, .sup { padding:12px 13px; }
+    .sup .vp { grid-template-columns:1fr; }
+    .grp { padding:10px; }
+    .cond { gap:6px; padding:6px 0; }
+    .cond > select, .cond > .vw { flex:1 1 100%; min-width:0; }
+    .cond > .vw > input { flex:1 1 0; min-width:0; }
+    .foot { gap:10px; }
+    .count { flex:1 1 100%; order:1; }
+    .verr { order:2; }
+    .foot-btns { order:3; width:100%; margin-left:0; }
+    .foot-btns > button { flex:1 1 0; }
+    button.primary { padding:11px 16px; }
+  }
+</style>
+</head>
+<body>
+<div id="app"><p class="sub">Loading…</p></div>
+
+<script>
+const BASE_URL="__BASE_URL__", GUILD_ID="__GUILD_ID__", ROLE_ID="__ROLE_ID__";
+const IFRAME_TOKEN="__IFRAME_TOKEN__", IS_EMBEDDED=!!IFRAME_TOKEN;
+const SECRET_MASK="••••••••";
+
+function postToHost(m){ if(!IS_EMBEDDED) return; try{ parent.postMessage(m,'*'); }catch(_){} }
+function postHeight(){ postToHost({type:'rl:resize',height:Math.max(
+  document.documentElement.scrollHeight,document.body.scrollHeight)}); }
+const postDirty=d=>postToHost({type:'rl:dirty',dirty:!!d});
+const postSaved=()=>postToHost({type:'rl:saved'});
+const postToast=(m,k)=>postToHost({type:'rl:toast',message:String(m||''),kind:k||'error'});
+if(IS_EMBEDDED&&'ResizeObserver'in window) new ResizeObserver(postHeight).observe(document.body);
+window.addEventListener('load',postHeight);
+
+function apiHeaders(x){ const h=Object.assign({'Content-Type':'application/json'},x||{});
+  if(IFRAME_TOKEN) h['Authorization']='Bearer '+IFRAME_TOKEN; return h; }
+// Read-only mode: a RoleLogic developer viewing this config while
+// impersonating the user. The server (admin.rs) rejects writes; we also
+// lock the UI. Self-contained IIFE with generic selectors so it works
+// regardless of this template's layout.
+(function(){
+  var READ_ONLY = '__READ_ONLY__' === '1';
+  if (!READ_ONLY) return;
+  document.documentElement.classList.add('rl-read-only');
+  var st = document.createElement('style');
+  st.textContent =
+    '.rl-read-only input,.rl-read-only select,.rl-read-only textarea,' +
+    '.rl-read-only button:not(.rl-ro-allow),.rl-read-only [contenteditable]' +
+    '{pointer-events:none !important;opacity:.6 !important}' +
+    '.rl-ro-banner{position:sticky;top:0;z-index:9999;background:#3a2d05;' +
+    'color:#fbbf24;border-bottom:1px solid #6b5409;padding:8px 16px;' +
+    'font:600 13px system-ui,sans-serif}';
+  document.head.appendChild(st);
+  function addBanner(){
+    var bn = document.createElement('div');
+    bn.className = 'rl-ro-banner rl-ro-allow';
+    bn.textContent = 'Read-only — impersonating a user. Changes are disabled.';
+    document.body.prepend(bn);
+  }
+  if (document.body) addBanner();
+  else addEventListener('DOMContentLoaded', addBanner);
+})();
+function apiCreds(){ return IS_EMBEDDED?'omit':'include'; }
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// Clipboard write that works in iframes without `allow="clipboard-write"`.
+// Tries the modern async API first; if it rejects falls back to a temporary
+// <textarea> + document.execCommand('copy'). Returns a Promise<boolean>.
+function copyText(text){
+  const fallback=()=>{ try{
+    const ta=document.createElement('textarea'); ta.value=text;
+    ta.setAttribute('readonly',''); ta.style.position='fixed';
+    ta.style.top='0'; ta.style.left='0'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0,text.length);
+    const ok=document.execCommand('copy'); document.body.removeChild(ta); return ok;
+  }catch(_){ return false; } };
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    return navigator.clipboard.writeText(text).then(()=>true,()=>fallback());
+  }
+  return Promise.resolve(fallback());
+}
+function wireCopy(btnId,text){ const b=document.getElementById(btnId); if(!b) return;
+  b.addEventListener('click',()=>{ copyText(text).then(ok=>{
+    b.textContent=ok?'Copied ✓':'Press Ctrl+C';
+    setTimeout(()=>b.textContent='Copy link',1500); }); }); }
+
+let state=null, dirty=false, refreshInFlight=false, supPending=false;
+
+/* ---- condition catalog (mirrors the server's ConditionField enum) ---- */
+const FIELDS=[
+ {key:'ownsGame',           cat:'game',    kind:'bool', label:'Owns the game',
+  yes:'Yes — must own it', no:'No — must NOT own it',
+  help:'The game is in their Steam library. Members with a private game list can’t be seen — unless you add a publisher key below.'},
+ {key:'gamePlaytime',       cat:'game',    kind:'int',  label:'Total playtime (hours)',
+  help:'Lifetime hours played in your game.'},
+ {key:'recentPlaytime',     cat:'game',    kind:'int',  label:'Recent playtime (hours, last 2 weeks)',
+  help:'Hours played in the last two weeks — good for “active player” roles.'},
+ {key:'achievementCount',   cat:'game',    kind:'int',  label:'Achievements unlocked (count)',
+  help:'How many of your game’s achievements they’ve unlocked.'},
+ {key:'achievementPercent', cat:'game',    kind:'int',  label:'Achievement completion (%)',
+  help:'Percentage of your game’s achievements unlocked.'},
+ {key:'hasAchievement',     cat:'game',    kind:'text', label:'Has a specific achievement',
+  ph:'ACHIEVEMENT_API_NAME', help:'The achievement’s internal API name — find it on SteamDB or the Steamworks dashboard.'},
+ {key:'steamLevel',         cat:'account', kind:'int',  label:'Steam level',
+  help:'Their Steam profile level.'},
+ {key:'accountAgeDays',     cat:'account', kind:'int',  label:'Account age (days)',
+  help:'Days since the Steam account was created. 365 = one year.'},
+ {key:'totalGamesOwned',    cat:'account', kind:'int',  label:'Games owned (total)',
+  help:'How many games are in their library.'},
+ {key:'isVACBanned',        cat:'account', kind:'bool', label:'VAC banned',
+  yes:'Yes — must be VAC banned', no:'No — must NOT be VAC banned',
+  help:'Whether the account has a VAC ban on record.'},
+ {key:'isGameBanned',       cat:'account', kind:'bool', label:'Game banned',
+  yes:'Yes — must be game banned', no:'No — must NOT be game banned',
+  help:'Whether the account has a game ban on record.'},
+ {key:'inGroup',            cat:'account', kind:'text', label:'Member of a Steam group',
+  ph:'Group ID (numbers)', help:'The Steam group’s numeric ID — find it on the group page or a SteamID lookup tool.'},
+ {key:'countryCode',        cat:'account', kind:'text', label:'Country code',
+  ph:'US', help:'Two-letter country code from their public profile, e.g. US, DE, JP.'},
+];
+const OPS=[
+ {key:'gte',label:'at least'},{key:'gt',label:'more than'},{key:'eq',label:'exactly'},
+ {key:'lte',label:'at most'},{key:'lt',label:'less than'},{key:'between',label:'between'},
+];
+function fieldByKey(k){ return FIELDS.find(f=>f.key===k); }
+function numOrNull(v){ return (v===''||v==null||isNaN(Number(v)))?null:Number(v); }
+
+/* preset id -> friendly copy; the rule shape is applied in applyPreset() */
+function presets(){ return [
+ {id:'owns',  t:'People who own our game', d:'The game is in their Steam library.'},
+ {id:'hours', t:'People who played our game a lot', d:'Total playtime reached your threshold.'},
+ {id:'level', t:'High Steam level', d:'Their Steam profile level.'},
+ {id:'age',   t:'Long-time Steam accounts', d:'Account age — filters brand-new accounts.'},
+ {id:'group', t:'Members of our Steam group', d:'They joined your Steam community group.'},
+ {id:'custom',t:'Advanced rule', d:'Achievements, recent playtime, bans, country and more.'},
+];}
+function detectPreset(c){
+  if(!c||!c.field) return 'owns';
+  if(c.field==='ownsGame'&&(c.value===true||c.value==='true')) return 'owns';
+  if(c.field==='gamePlaytime'&&c.operator==='gte') return 'hours';
+  if(c.field==='steamLevel'&&c.operator==='gte') return 'level';
+  if(c.field==='accountAgeDays'&&c.operator==='gte') return 'age';
+  if(c.field==='inGroup') return 'group';
+  return 'custom';
+}
+
+async function load(){
+  try{
+    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/data`,
+      {headers:apiHeaders(),credentials:apiCreds(),cache:'no-store'});
+    if(!r.ok){ const e=await r.json().catch(()=>({error:r.status}));
+      document.getElementById('app').innerHTML=`<div class="toast e">${esc(e.error||('HTTP '+r.status))}</div>`;
+      postHeight(); return; }
+    state=await r.json();
+    initEditFromConfig();
+    render(); autoPreview();
+  }catch(e){ document.getElementById('app').innerHTML=
+    `<div class="toast e">Network error: ${esc(String(e))}</div>`; }
+}
+
+function initEditFromConfig(){
+  const c=state.config||{};
+  state._pk = c.has_publisher_key ? SECRET_MASK : '';
+  state._pkOpen = !!c.has_publisher_key;
+  state._n = {hours:100, level:10, age:365};
+  state._txt = {group:''};
+  if(c.field==='gamePlaytime') state._n.hours=Number(c.value)||100;
+  if(c.field==='steamLevel') state._n.level=Number(c.value)||10;
+  if(c.field==='accountAgeDays') state._n.age=Number(c.value)||365;
+  if(c.field==='inGroup') state._txt.group=String(c.value||'');
+  state._edit={ field:c.field||null, operator:c.operator||'gte',
+    value:c.value, value_end:c.value_end, app_id:c.app_id||'' };
+  state._preset=detectPreset(c);
+  if(!c.field){
+    // Freshly registered role: pre-select the flagship preset. The edit is
+    // dirty vs the empty baseline, but Save stays disabled until the admin
+    // enters a valid App ID.
+    state._preset='owns';
+    applyPreset('owns');
+  }
+  recomputeDirty();
+}
+
+function applyPreset(id){
+  const e=state._edit;
+  switch(id){
+    case 'owns':  Object.assign(e,{field:'ownsGame',operator:'eq',value:true,value_end:null}); break;
+    case 'hours': Object.assign(e,{field:'gamePlaytime',operator:'gte',value:state._n.hours,value_end:null}); break;
+    case 'level': Object.assign(e,{field:'steamLevel',operator:'gte',value:state._n.level,value_end:null}); break;
+    case 'age':   Object.assign(e,{field:'accountAgeDays',operator:'gte',value:state._n.age,value_end:null}); break;
+    case 'group': Object.assign(e,{field:'inGroup',operator:'eq',value:state._txt.group,value_end:null}); break;
+    case 'custom':
+      // Keep whatever is configured; seed a sensible default if nothing is.
+      if(!e.field){ Object.assign(e,{field:'steamLevel',operator:'gte',value:10,value_end:null}); }
+      break;
+  }
+  recomputeDirty();
+}
+
+/* ---- dirty tracking: compare normalized edit vs saved baseline ---- */
+function normVal(f,v){
+  if(!f) return null;
+  if(f.kind==='int') return numOrNull(v);
+  if(f.kind==='bool') return v===true||v==='true';
+  return String(v==null?'':v).trim();
+}
+function normKey(field,operator,value,value_end,app_id,pk){
+  const f=fieldByKey(field);
+  if(!f) return 'UNSET';
+  const op=f.kind==='int'?operator:'eq';
+  return JSON.stringify({f:field, o:op, v:normVal(f,value),
+    ve:(op==='between'?numOrNull(value_end):null),
+    a:(f.cat==='game'?String(app_id||'').trim():null),
+    pk:(f.key==='ownsGame'?pk:null)});
+}
+function baselineKey(){
+  const c=state.config||{};
+  return normKey(c.field,c.operator,c.value,c.value_end,c.app_id,
+    c.has_publisher_key?SECRET_MASK:'');
+}
+function editKey(){
+  const e=state._edit;
+  return normKey(e.field,e.operator,e.value,e.value_end,e.app_id,state._pk);
+}
+function recomputeDirty(){ if(!state||!state._edit) return; setDirty(editKey()!==baselineKey()); }
+function setDirty(d){ dirty=d; postDirty(d); updateFoot(); }
+
+function validationError(){
+  const e=state._edit, f=fieldByKey(e.field);
+  if(!f) return 'Pick a condition.';
+  if(f.cat==='game' && !/^[0-9]+$/.test(String(e.app_id||'').trim()))
+    return 'Enter your game’s numeric Steam App ID.';
+  if(f.kind==='int'){
+    const v=numOrNull(e.value);
+    if(v==null) return 'Enter a number.';
+    if(!Number.isInteger(v)||v<0) return 'Use a whole number (0 or more).';
+    if(e.operator==='between'){
+      const ve=numOrNull(e.value_end);
+      if(ve==null) return 'Enter the end of the range.';
+      if(!Number.isInteger(ve)||ve<0) return 'Use a whole number for the range end.';
+      if(v>ve) return 'Range start must be ≤ end.';
+    }
+  }
+  if(f.kind==='text' && !String(e.value||'').trim()) return 'Enter a value.';
+  if(f.key==='countryCode' && !/^[A-Za-z]{2}$/.test(String(e.value||'').trim()))
+    return 'Country code is 2 letters, e.g. US.';
+  if(f.key==='inGroup' && !/^[0-9]+$/.test(String(e.value||'').trim()))
+    return 'Steam group ID is numeric — find it on the group page.';
+  if(f.key==='ownsGame' && state._pk && state._pk!==SECRET_MASK
+     && !/^[0-9a-fA-F]{32}$/.test(state._pk.trim()))
+    return 'Publisher key must be 32 hex characters (or leave it blank).';
+  return null;
+}
+function updateFoot(){
+  const s=document.getElementById('save'), v=document.getElementById('verr');
+  const err=state&&state._edit?validationError():null;
+  if(s) s.disabled=!dirty||!!err;
+  if(v){ const t=(dirty&&err)?err:''; if(v.textContent!==t){ v.textContent=t; postHeight(); } }
+}
+
+/* Build the flat save payload the server-side parse_config validates. */
+function buildPayload(){
+  const e=state._edit, f=fieldByKey(e.field), out={};
+  out.condition_category=f.cat;
+  if(f.cat==='game'){
+    out.app_id=String(e.app_id||'').trim();
+    out.condition_field_game=f.key;
+    if(f.kind==='int'){
+      out.operator_game=e.operator;
+      out.value_num_game=numOrNull(e.value);
+      if(e.operator==='between') out.value_end_game=numOrNull(e.value_end);
+    }
+    if(f.key==='ownsGame'){
+      out.value_bool_game=(e.value===true||e.value==='true')?'true':'false';
+      out.publisher_key=state._pk;
+    }
+    if(f.key==='hasAchievement') out.value_achievement=String(e.value||'').trim();
+  } else {
+    out.condition_field_account=f.key;
+    if(f.kind==='int'){
+      out.operator_account=e.operator;
+      out.value_num_account=numOrNull(e.value);
+      if(e.operator==='between') out.value_end_account=numOrNull(e.value_end);
+    }
+    if(f.kind==='bool') out.value_bool_account=(e.value===true||e.value==='true')?'true':'false';
+    if(f.key==='inGroup') out.value_group=String(e.value||'').trim();
+    if(f.key==='countryCode') out.value_country=String(e.value||'').trim();
+  }
+  return out;
+}
+
+/* ---------------- rendering ---------------- */
+
+function appIdBlock(){
+  return `<div class="extra"><div class="inline">Your game’s Steam App ID
+    <input type="text" id="appid" inputmode="numeric" placeholder="730"
+      value="${esc(state._edit.app_id||'')}" style="width:110px">
+    <span class="hint">It’s the number in the game’s store page URL:
+      store.steampowered.com/app/<b>730</b>/…</span></div></div>`;
+}
+function pubKeyBlock(){
+  return `<div class="extra"><details class="pk" id="pkbox" ${state._pkOpen?'open':''}>
+    <summary>Optional: Steamworks publisher key (for game developers)</summary>
+    <span class="hint">Verifies ownership through Steam’s partner API instead of the
+      public library — works even when members keep their game details private,
+      excludes Family Sharing, and ignores free weekends. Only your game’s
+      developer/publisher has this key.</span>
+    <input type="password" id="pk" autocomplete="off"
+      placeholder="Leave blank to use the normal library check"
+      value="${esc(state._pk)}">
+    <span class="hint">Type a new key to replace a stored one; clear the field to remove it.</span>
+  </details></div>`;
+}
+
+function render(){
+  const app=document.getElementById('app');
+  const cur=state._preset;
+  const verifyUrl=state.verify_url||(BASE_URL+'/verify');
+
+  const opts=presets().map(p=>`<label class="opt ${cur===p.id?'sel':''}">
+      <input type="radio" name="who" value="${p.id}" ${cur===p.id?'checked':''}>
+      <div><div class="t">${esc(p.t)}</div><div class="d">${esc(p.d)}</div></div></label>`).join('');
+
+  // Conditional extras live BELOW the grid so every row stays one compact line.
+  let extra='';
+  if(cur==='owns') extra=appIdBlock()+pubKeyBlock();
+  else if(cur==='hours') extra=appIdBlock()+`<div class="extra"><div class="inline">Played at least
+    <input type="number" id="nhours" min="0" value="${esc(state._n.hours)}"> hours (lifetime)</div></div>`;
+  else if(cur==='level') extra=`<div class="extra"><div class="inline">Steam level at least
+    <input type="number" id="nlevel" min="0" value="${esc(state._n.level)}"></div></div>`;
+  else if(cur==='age') extra=`<div class="extra"><div class="inline">Account at least
+    <input type="number" id="nage" min="0" value="${esc(state._n.age)}"> days old
+    <span class="hint">365 days = 1 year.</span></div></div>`;
+  else if(cur==='group') extra=`<div class="extra"><div class="inline">Steam group ID
+    <input type="text" id="gid" inputmode="numeric" placeholder="103582791429521408"
+      value="${esc(state._txt.group)}" style="width:200px">
+    <span class="hint">The group’s numeric ID — find it on the group page or a SteamID lookup tool.</span></div></div>`;
+  else if(cur==='custom') extra=`<div class="extra"><div class="adv" id="rule"></div></div>`;
+
+  // Public players-page server-wide setting. Always rendered so admins
+  // discover the public page exists and can change its visibility inline.
+  const sup=state.players||{url:'',view_permission:'members'};
+  const vp=sup.view_permission||'members';
+  const vpOpts=[
+    {id:'members',  t:'All server members',   d:'Anyone in this server can view.'},
+    {id:'managers', t:'Server managers only', d:'Only members with Manage Server.'},
+  ];
+  const playersBlk=`
+    <div class="sup">
+      <b>Public player list</b><span id="vp-saved" class="saved">Saved ✓</span>
+      <div style="margin-top:4px; color:#8a93a4; font-size:12.5px">
+        A read-only list of every member who linked Steam in this server —
+        name, level, games owned, country. Searchable and sortable.
+      </div>
+      <div class="copybox" style="margin-top:9px">
+        <code id="surl">${esc(sup.url)}</code>
+        <a class="btn-open" href="${esc(sup.url)}" target="_blank" rel="noopener noreferrer">Open</a>
+        <button id="copysup">Copy link</button></div>
+      <div class="vp">
+        ${vpOpts.map(o=>`<label class="${o.id===vp?'sel':''}">
+          <input type="radio" name="vp" value="${o.id}" ${o.id===vp?'checked':''}>
+          <div><div class="t">${esc(o.t)}</div><div class="d">${esc(o.d)}</div></div>
+        </label>`).join('')}
+      </div>
+    </div>`;
+
+  app.innerHTML=`
+    <h1>Steam Player Roles</h1>
+    <p class="sub">Give this Discord role to people automatically, based on their Steam account.</p>
+    <div class="q">Who should get this role?</div>
+    <div class="opts">${opts}</div>
+    ${extra}
+    <div class="share"><b>One thing your members must do:</b> link their Steam
+      account once, here — until they do, they won’t get the role even if they qualify.
+      <div class="copybox"><code id="vurl">${esc(verifyUrl)}</code>
+        <a class="btn-open" href="${esc(verifyUrl)}" target="_blank" rel="noopener noreferrer">Open</a>
+        <button id="copy">Copy link</button></div>
+    </div>
+    ${playersBlk}
+    <div class="foot">
+      <span class="count" id="count"></span>
+      <span class="verr" id="verr"></span>
+      <div class="foot-btns">
+        <button id="preview">Preview</button>
+        <button id="save" class="primary" disabled>Save</button>
+      </div>
+    </div>`;
+
+  app.querySelectorAll('input[name=who]').forEach(r=>r.addEventListener('change',()=>choose(r.value)));
+  wireCopy('copy', verifyUrl);
+  wireCopy('copysup', sup.url);
+  app.querySelectorAll('input[name=vp]').forEach(r=>r.addEventListener('change',()=>setViewPerm(r.value)));
+  wireExtraInputs(cur);
+  document.getElementById('save').addEventListener('click',doSave);
+  document.getElementById('preview').addEventListener('click',doPreviewEdit);
+  if(cur==='custom') renderRule();
+  updateFoot(); postHeight();
+}
+
+function choose(id){ state._preset=id; applyPreset(id); render(); }
+
+/* Value inputs update state WITHOUT re-rendering, so typing never loses focus. */
+function wireExtraInputs(cur){
+  const on=(id,fn)=>{ const el=document.getElementById(id); if(el) el.addEventListener('input',fn); };
+  on('appid',e=>{ state._edit.app_id=e.target.value.trim(); recomputeDirty(); });
+  on('nhours',e=>{ state._n.hours=e.target.value; if(cur==='hours'){ state._edit.value=e.target.value; recomputeDirty(); } });
+  on('nlevel',e=>{ state._n.level=e.target.value; if(cur==='level'){ state._edit.value=e.target.value; recomputeDirty(); } });
+  on('nage',e=>{ state._n.age=e.target.value; if(cur==='age'){ state._edit.value=e.target.value; recomputeDirty(); } });
+  on('gid',e=>{ state._txt.group=e.target.value.trim(); if(cur==='group'){ state._edit.value=e.target.value.trim(); recomputeDirty(); } });
+  on('pk',e=>{ state._pk=e.target.value; recomputeDirty(); });
+  const pkbox=document.getElementById('pkbox');
+  if(pkbox) pkbox.addEventListener('toggle',()=>{ state._pkOpen=pkbox.open; postHeight(); });
+}
+
+/* ---- advanced builder (only visible under the “Advanced rule” option) ---- */
+function renderRule(){
+  const box=document.getElementById('rule'); if(!box) return;
+  const e=state._edit, f=fieldByKey(e.field)||FIELDS[0];
+  const grouped=[['game','About your game (needs its App ID)'],['account','About the Steam account']];
+  const tsel=grouped.map(([cat,label])=>`<optgroup label="${label}">`+
+    FIELDS.filter(x=>x.cat===cat).map(x=>`<option value="${x.key}" ${x.key===f.key?'selected':''}>${esc(x.label)}</option>`).join('')+
+    `</optgroup>`).join('');
+  let mid;
+  if(f.kind==='bool'){
+    const yes=e.value===true||e.value==='true';
+    mid=`<select class="bv"><option value="1" ${yes?'selected':''}>${esc(f.yes)}</option>
+      <option value="0" ${!yes?'selected':''}>${esc(f.no)}</option></select>`;
+  } else if(f.kind==='int'){
+    mid=`<select class="o">${OPS.map(o=>`<option value="${o.key}" ${o.key===e.operator?'selected':''}>${esc(o.label)}</option>`).join('')}</select>
+      <span class="vw"><input type="number" class="v" min="0" value="${e.value??''}">${
+        e.operator==='between'?` and <input type="number" class="ve" min="0" value="${e.value_end??''}">`:''}</span>`;
+  } else {
+    mid=`<input type="text" class="v" placeholder="${esc(f.ph||'')}" value="${esc(e.value==null?'':e.value)}">`;
+  }
+  box.innerHTML=`<div class="grp">
+    <div class="cond"><select class="t">${tsel}</select>${mid}
+      <div class="hint">${esc(f.help||'')}</div></div>
+    ${f.cat==='game'?appIdBlock().replace('class="extra"','class="extra" style="margin-top:8px"'):''}
+    ${f.key==='ownsGame'?pubKeyBlock():''}
+  </div>`;
+  box.querySelector('.t').onchange=ev=>{
+    const nf=fieldByKey(ev.target.value); state._edit.field=nf.key;
+    if(nf.kind==='int'){ state._edit.operator='gte'; state._edit.value=''; }
+    else if(nf.kind==='bool'){ state._edit.operator='eq'; state._edit.value=(nf.key==='ownsGame'); }
+    else { state._edit.operator='eq'; state._edit.value=''; }
+    state._edit.value_end=null;
+    recomputeDirty(); renderRule(); postHeight();
+  };
+  const o=box.querySelector('.o'); if(o) o.onchange=ev=>{
+    state._edit.operator=ev.target.value;
+    if(ev.target.value!=='between') state._edit.value_end=null;
+    recomputeDirty(); renderRule(); postHeight();
+  };
+  const bv=box.querySelector('.bv'); if(bv) bv.onchange=ev=>{
+    state._edit.value=(ev.target.value==='1'); recomputeDirty();
+  };
+  const v=box.querySelector('.v'); if(v) v.oninput=ev=>{ state._edit.value=ev.target.value; recomputeDirty(); };
+  const ve=box.querySelector('.ve'); if(ve) ve.oninput=ev=>{ state._edit.value_end=ev.target.value; recomputeDirty(); };
+  wireExtraInputs('custom');
+}
+
+/* ---------------- server calls ---------------- */
+
+async function setViewPerm(next){
+  const prev=(state.players&&state.players.view_permission)||'members';
+  if(next===prev) return;
+  if(!state.players) state.players={url:'',view_permission:prev};
+  state.players.view_permission=next;
+  supPending=true; render(); // optimistic
+  try{
+    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/view-permission`,
+      {method:'POST',headers:apiHeaders(),credentials:apiCreds(),
+       body:JSON.stringify({view_permission:next})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){ state.players.view_permission=prev; render();
+      postToast(d.error||'Could not update player-list access.'); return; }
+    render();
+    const pill=document.getElementById('vp-saved');
+    if(pill){ pill.classList.add('show');
+      clearTimeout(setViewPerm._t);
+      setViewPerm._t=setTimeout(()=>pill.classList.remove('show'),1800); }
+  }catch(e){ state.players.view_permission=prev; render();
+    postToast('Network error: '+e); }
+  finally{ supPending=false; }
+}
+
+async function doPreview(){
+  const el=document.getElementById('count'); if(!el) return;
+  try{
+    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/preview`,
+      {headers:apiHeaders(),credentials:apiCreds(),cache:'no-store'});
+    const d=await r.json();
+    if(!r.ok||d.available===false){ el.textContent=''; return; }
+    el.innerHTML=`<span class="ok">${d.matching}</span> of ${d.linked} linked member(s) match`
+      +(dirty?` · <span style="color:#fbbf24">Save to apply</span>`:``);
+  }catch(_){ el.textContent=''; }
+  postHeight();
+}
+function autoPreview(){ doPreview(); }
+
+// Previews the *current* (possibly unsaved) edit. POSTs the proposed
+// condition to the same /preview endpoint — backend dispatches by method.
+async function doPreviewEdit(){
+  const el=document.getElementById('count'); const btn=document.getElementById('preview');
+  if(!btn) return;
+  const err=validationError();
+  if(err){ postToast(err); return; }
+  btn.disabled=true; const orig=btn.textContent; btn.textContent='Previewing…';
+  try{
+    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/preview`,
+      {method:'POST',headers:apiHeaders(),credentials:apiCreds(),
+       body:JSON.stringify({config:buildPayload()})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){ postToast(d.error||('Preview failed (HTTP '+r.status+')')); return; }
+    if(d.available===false){ el.textContent=d.reason||'Preview unavailable.'; postHeight(); return; }
+    el.innerHTML=`<span class="ok">${d.matching}</span> of ${d.linked} linked member(s) match`
+      +(dirty?` · <span style="color:#fbbf24">Preview of unsaved rule</span>`:``);
+  }catch(e){ postToast('Network error: '+e); }
+  finally{ btn.disabled=false; btn.textContent=orig; postHeight(); }
+}
+
+async function doSave(){
+  const err=validationError();
+  if(err){ postToast(err); return; }
+  const payload={ config_version:state.config_version, config:buildPayload() };
+  try{
+    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/save`,
+      {method:'POST',headers:apiHeaders(),credentials:apiCreds(),body:JSON.stringify(payload)});
+    const d=await r.json().catch(()=>({}));
+    if(r.status===409){ postToast('Changed in another tab. Reload to get the latest, then re-apply.'); return; }
+    if(!r.ok){ postToast(d.error||('Save failed (HTTP '+r.status+')')); return; }
+    state.config_version=d.config_version;
+    state.config=d.config;
+    state._pk=d.config.has_publisher_key?SECRET_MASK:'';
+    setDirty(false); postSaved();
+    postToast('Saved ✓  Roles update within a minute. Make sure members link Steam using the link above.','success');
+    render(); autoPreview();
+  }catch(e){ postToast('Network error: '+e); }
+}
+
+async function refreshFromServer(){
+  if(!state||refreshInFlight) return; refreshInFlight=true;
+  try{
+    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/data`,
+      {headers:apiHeaders(),credentials:apiCreds(),cache:'no-store'});
+    if(r.ok){ const d=await r.json();
+      const cfgCh=JSON.stringify(d.config)!==JSON.stringify(state.config);
+      const supCh=JSON.stringify(d.players)!==JSON.stringify(state.players);
+      // Don't clobber an in-flight view_permission change — server still has
+      // the old value until our POST commits.
+      const applySup=supCh&&!supPending;
+      if(applySup) state.players=d.players;
+      // Never overwrite the admin's unsaved edit (the single most common
+      // iframe-UX bug) — only adopt server config while pristine.
+      if(cfgCh&&!dirty){
+        state.config=d.config; state.config_version=d.config_version;
+        initEditFromConfig();
+      } else if(!dirty){
+        state.config_version=d.config_version;
+      }
+      if(applySup||(cfgCh&&!dirty)){ render(); autoPreview(); } }
+  }catch(_){}
+  finally{ refreshInFlight=false; }
+}
+window.addEventListener('message',e=>{ if(e.data&&e.data.type==='rl:visible') refreshFromServer(); });
+window.addEventListener('focus',refreshFromServer);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refreshFromServer(); });
+if(!IS_EMBEDDED) window.addEventListener('beforeunload',e=>{ if(dirty){ e.preventDefault(); e.returnValue=''; } });
+
+load();
+</script>
+</body>
+</html>

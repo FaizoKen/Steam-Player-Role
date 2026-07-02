@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::error::AppError;
+use crate::services::quota::Class;
 use crate::services::session;
 use crate::services::sync::PlayerSyncEvent;
 use crate::AppState;
@@ -62,6 +63,10 @@ pub fn render_verify_page(base_url: &str) -> String {
         .btn-steam:hover {{ background: #4a7516; }}
         .btn-danger {{ background: transparent; color: #f87171; border: 1px solid #7f1d1d; font-size: 13px; padding: 8px 16px; }}
         .btn-danger:hover {{ background: #7f1d1d33; }}
+        .btn:disabled {{ opacity: .5; cursor: default; }}
+        .warn-card {{ background: #1c1208; border: 1px solid #422006; color: #fbbf24; padding: 14px 16px; border-radius: 8px; margin: 12px 0; font-size: 13px; line-height: 1.6; }}
+        .warn-card strong {{ color: #fcd34d; }}
+        .warn-card a {{ color: #fcd34d; }}
         .badge {{ display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }}
         .badge-ok {{ background: #052e16; color: #4ade80; border: 1px solid #14532d; }}
         .msg {{ padding: 10px 14px; border-radius: 6px; margin: 12px 0; font-size: 13px; line-height: 1.5; }}
@@ -121,6 +126,11 @@ pub fn render_verify_page(base_url: &str) -> String {
         </div>
         <div class="info-row"><span class="label">Steam</span> <span class="val" id="linked-steam"></span></div>
         <div class="info-row"><span class="label">Discord</span> <span class="val" id="linked-discord" style="color:#8f9bab;font-weight:400;font-size:13px;"></span></div>
+        <div id="privacy-warning" class="warn-card hidden">
+            <p style="margin:0 0 8px;"><strong>Your Steam game details are private</strong> — set them to public, then re-check. Game-based roles (ownership, playtime, achievements) can't be verified while your game details are hidden.</p>
+            <p style="margin:0 0 12px;">Steam → <a href="https://steamcommunity.com/my/edit/settings" target="_blank" rel="noopener">Privacy Settings</a> → set <strong>Game details</strong> to Public.</p>
+            <button id="recheck-btn" class="btn btn-steam" onclick="doRecheck()">Re-check</button>
+        </div>
         <p style="color:#4ade80; margin-top:12px; font-size:13px;">Your roles are assigned automatically based on your Steam data.</p>
         <p style="margin-top:14px; font-size:13px; color:#8f9bab;">
             Receiving Steam roles in servers you didn't intend?
@@ -278,6 +288,7 @@ pub fn render_verify_page(base_url: &str) -> String {
             if (s.linked) {{
                 document.getElementById('linked-steam').textContent = s.steam_name || s.linked;
                 document.getElementById('linked-discord').textContent = s.display_name;
+                document.getElementById('privacy-warning').classList.toggle('hidden', s.library_visible !== false);
                 showSection('linked-section');
             }} else {{
                 document.getElementById('steam-discord').textContent = s.display_name;
@@ -298,6 +309,19 @@ pub fn render_verify_page(base_url: &str) -> String {
             showSection('login-section');
             showMsg('Logged out.', 'success');
         }} catch (e) {{ showMsg(e.message, 'error'); }}
+    }}
+
+    async function doRecheck() {{
+        clearMsg();
+        const btn = document.getElementById('recheck-btn');
+        btn.disabled = true;
+        try {{
+            await api('POST', '/verify/recheck');
+            showMsg('Re-check queued — your Steam data refreshes within a minute. Reload this page afterwards.', 'success');
+        }} catch (e) {{
+            showMsg(e.message, 'error');
+            btn.disabled = false;
+        }}
     }}
 
     async function doUnlink() {{
@@ -347,8 +371,11 @@ pub async fn status(
 ) -> Result<Json<Value>, AppError> {
     let (discord_id, display_name) = get_session(&jar, &state.config.session_secret)?;
 
-    let account = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT steam_id, steam_name FROM linked_accounts WHERE discord_id = $1",
+    let account = sqlx::query_as::<_, (String, Option<String>, Option<bool>)>(
+        "SELECT la.steam_id, la.steam_name, uc.library_visible \
+         FROM linked_accounts la \
+         LEFT JOIN user_cache uc ON uc.steam_id = la.steam_id \
+         WHERE la.discord_id = $1",
     )
     .bind(&discord_id)
     .fetch_optional(&state.pool)
@@ -359,7 +386,49 @@ pub async fn status(
         "display_name": display_name,
         "linked": account.as_ref().map(|a| &a.0),
         "steam_name": account.as_ref().and_then(|a| a.1.as_ref()),
+        // Default true: no cache row yet means "not checked", not "private".
+        "library_visible": account.as_ref().map_or(true, |a| a.2.unwrap_or(true)),
     })))
+}
+
+/// Queue an immediate Steam data refresh for the linked account (the verify
+/// page's "Re-check" button after fixing privacy settings). The DB-side
+/// guard rate-limits it to once per 5 minutes per user.
+pub async fn recheck(
+    State(state): State<Arc<AppState>>,
+    jar: CookieJar,
+) -> Result<Json<Value>, AppError> {
+    let (discord_id, _) = get_session(&jar, &state.config.session_secret)?;
+
+    let steam_id = sqlx::query_scalar::<_, String>(
+        "SELECT steam_id FROM linked_accounts WHERE discord_id = $1",
+    )
+    .bind(&discord_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(AppError::NotFound("No linked account found".into()))?;
+
+    // next_fetch_at = epoch jumps the front of the refresh queue (ordered by
+    // next_fetch_at ASC) — under a backlog "now()" would land BEHIND every
+    // already-overdue row.
+    let result = sqlx::query(
+        "UPDATE user_cache SET next_fetch_at = to_timestamp(0), recheck_requested_at = now() \
+         WHERE steam_id = $1 \
+           AND (recheck_requested_at IS NULL OR recheck_requested_at <= now() - INTERVAL '5 minutes')",
+    )
+    .bind(&steam_id)
+    .execute(&state.pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::TooManyRequests(
+            "Re-check already requested — try again in a few minutes.".into(),
+        ));
+    }
+
+    tracing::info!(discord_id, steam_id, "Manual re-check queued");
+
+    Ok(Json(json!({"success": true})))
 }
 
 /// Redirect to Steam OpenID login
@@ -572,9 +641,13 @@ pub async fn callback(
         }
     }
 
-    // Fetch Steam profile name
+    // Fetch Steam profile name (user is waiting on this page — interactive)
     let ids: Vec<&str> = vec![steam_id];
-    let steam_name = match state.steam_client.get_player_summaries(&ids).await {
+    let steam_name = match state
+        .steam_client
+        .get_player_summaries(&ids, Class::Interactive)
+        .await
+    {
         Ok(profiles) => profiles.first().and_then(|p| p.personaname.clone()),
         Err(_) => None,
     };
@@ -590,11 +663,17 @@ pub async fn callback(
     .execute(&state.pool)
     .await?;
 
-    // Create initial user_cache entry
-    sqlx::query("INSERT INTO user_cache (steam_id) VALUES ($1) ON CONFLICT (steam_id) DO NOTHING")
-        .bind(steam_id)
-        .execute(&state.pool)
-        .await?;
+    // Create initial user_cache entry. next_fetch_at = epoch puts them at the
+    // absolute front of the refresh queue (ordered by next_fetch_at ASC), so
+    // the first fetch happens promptly even under a large backlog; the worker
+    // also serves fresh links from the interactive quota reserve.
+    sqlx::query(
+        "INSERT INTO user_cache (steam_id, next_fetch_at) VALUES ($1, to_timestamp(0)) \
+         ON CONFLICT (steam_id) DO UPDATE SET next_fetch_at = to_timestamp(0)",
+    )
+    .bind(steam_id)
+    .execute(&state.pool)
+    .await?;
 
     // Clean up verification session
     sqlx::query("DELETE FROM verification_sessions WHERE discord_id = $1")
@@ -638,6 +717,22 @@ pub async fn unlink(
 
     sqlx::query("DELETE FROM linked_accounts WHERE discord_id = $1")
         .bind(&discord_id)
+        .execute(&state.pool)
+        .await?;
+
+    // Drop cached Steam data too: the user asked us to forget them, and an
+    // orphaned always-due user_cache row would sit in the refresh scan
+    // forever. Relink re-creates everything.
+    sqlx::query("DELETE FROM user_cache WHERE steam_id = $1")
+        .bind(&account.0)
+        .execute(&state.pool)
+        .await?;
+    sqlx::query("DELETE FROM game_achievement_cache WHERE steam_id = $1")
+        .bind(&account.0)
+        .execute(&state.pool)
+        .await?;
+    sqlx::query("DELETE FROM app_ownership_cache WHERE steam_id = $1")
+        .bind(&account.0)
         .execute(&state.pool)
         .await?;
 
