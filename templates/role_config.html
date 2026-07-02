@@ -51,6 +51,18 @@
   .pk summary:hover { color:#c7d5e4; }
   .pk input { width:100%; margin:8px 0 4px; }
   .pk .hint { display:block; }
+  .pk .pkb { margin-top:9px; }
+  .pk .pk-p { margin:0 0 8px; color:#aab3c2; font-size:12px; line-height:1.5; }
+  .pk .pk-p b, .pk .pk-how b { color:#cfd6e4; }
+  .pk ul.pk-list { margin:0 0 10px; padding-left:18px; color:#8a93a4;
+    font-size:12px; line-height:1.45; }
+  .pk ul.pk-list li { margin:2px 0; }
+  .pk ul.pk-list li::marker { content:"✓  "; color:#66c0f4; }
+  .pk .pk-how { border:1px solid #2a2f3a; background:#0f131b; border-radius:8px;
+    padding:9px 12px; font-size:12px; color:#aab3c2; }
+  .pk .pk-how ol { margin:6px 0 0; padding-left:20px; }
+  .pk .pk-how li { margin:3px 0; line-height:1.45; }
+  .pk a { color:#66c0f4; }
   /* member link */
   .share { background:#15202b; border:1px solid #1f3346; border-radius:10px;
     padding:13px 15px; margin:22px 0; font-size:13px; color:#a9c3d8; }
@@ -413,14 +425,38 @@ function appIdBlock(){
 function pubKeyBlock(){
   return `<div class="extra"><details class="pk" id="pkbox" ${state._pkOpen?'open':''}>
     <summary>Optional: Steamworks publisher key (for game developers)</summary>
-    <span class="hint">Verifies ownership through Steam’s partner API instead of the
-      public library — works even when members keep their game details private,
-      excludes Family Sharing, and ignores free weekends. Only your game’s
-      developer/publisher has this key.</span>
-    <input type="password" id="pk" autocomplete="off"
-      placeholder="Leave blank to use the normal library check"
-      value="${esc(state._pk)}">
-    <span class="hint">Type a new key to replace a stored one; clear the field to remove it.</span>
+    <div class="pkb">
+      <p class="pk-p">By default we check each member’s <b>public</b> Steam library.
+        If a member sets their “Game details” to private, we can’t see their games,
+        so they won’t get the role even if they own yours. A publisher key fixes
+        that: ownership is verified through Steam’s partner API instead.</p>
+      <ul class="pk-list">
+        <li>Works even when members keep their game details private</li>
+        <li>Counts real purchases only — excludes Family Sharing</li>
+        <li>Ignores free weekends and other temporary licenses</li>
+      </ul>
+      <div class="pk-how"><b>How to get your key</b> (free, ~2 minutes — needs
+        Steamworks admin access):
+        <ol>
+          <li>Sign in at <a href="https://partner.steamgames.com" target="_blank"
+            rel="noopener noreferrer">partner.steamgames.com</a> with the account
+            that manages your game.</li>
+          <li>Open <b>Users &amp; Permissions → Manage Groups</b>.</li>
+          <li>Pick a group that includes your game, or create one —
+            the key can only see the games in its group.</li>
+          <li>Click <b>Create WebAPI Key</b>, then copy the 32-character key
+            and paste it below.</li>
+        </ol>
+      </div>
+      <input type="password" id="pk" autocomplete="off"
+        placeholder="Paste your 32-character key — or leave blank for the normal library check"
+        value="${esc(state._pk)}">
+      <span class="hint">Treat the key like a password — after saving it’s stored
+        securely and never shown again. Type a new key to replace a stored one;
+        clear the field to remove it.</span>
+      <span class="hint">Not the game’s developer or publisher? Just leave this
+        blank — the normal library check works for most servers.</span>
+    </div>
   </details></div>`;
 }
 
