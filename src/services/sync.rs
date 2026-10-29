@@ -443,6 +443,7 @@ pub async fn sync_for_role_link(
                 delete_orphan_role_link(guild_id, role_id, pool).await;
                 return Ok(());
             }
+            Err(AppError::RoleLinkDisabled) => return Ok(()),
             Err(e) => return Err(e),
         }
         sqlx::query("DELETE FROM role_assignments WHERE guild_id = $1 AND role_id = $2")
@@ -482,6 +483,7 @@ pub async fn sync_for_role_link(
                 delete_orphan_role_link(guild_id, role_id, pool).await;
                 return Ok(());
             }
+            Err(AppError::RoleLinkDisabled) => return Ok(()),
             Err(e) => return Err(e),
         }
         let mut tx = pool.begin().await?;
@@ -652,6 +654,7 @@ pub async fn sync_for_role_link(
                 delete_orphan_role_link(guild_id, role_id, pool).await;
                 return Ok(());
             }
+            Err(AppError::RoleLinkDisabled) => return Ok(()),
             Err(e) => return Err(e),
         }
 
@@ -699,6 +702,7 @@ pub async fn sync_for_role_link(
                 delete_orphan_role_link(guild_id, role_id, pool).await;
                 return Ok(());
             }
+            Err(AppError::RoleLinkDisabled) => return Ok(()),
             Err(e) => return Err(e),
         }
 
