@@ -796,6 +796,18 @@ async fn refresh_user(
     .execute(&state.pool)
     .await?;
 
+    // Keep the stored Steam name (players page, verify page) in step with
+    // the profile: it was only ever written at link time.
+    if let Some(name) = profile.and_then(|p| p.personaname.as_deref()) {
+        let _ = sqlx::query(
+            "UPDATE linked_accounts SET steam_name = $1              WHERE steam_id = $2 AND steam_name IS DISTINCT FROM $1",
+        )
+        .bind(name)
+        .bind(&user.steam_id)
+        .execute(&state.pool)
+        .await;
+    }
+
     let _ = state
         .player_sync_tx
         .send(PlayerSyncEvent::PlayerUpdated {

@@ -77,6 +77,7 @@ All routes are nested under `/steam-player-role`:
 | `GET`    | `/verify/callback`         | Steam OpenID return URL — validates and links account |
 | `POST`   | `/verify/unlink`           | Unlink Discord account from Steam profile             |
 | `POST`   | `/verify/recheck`          | Queue an immediate data refresh (once per 5 minutes)  |
+| `POST`   | `/verify/sync`             | Re-evaluate a linked member's roles from cached data (once a minute; sent by the verify page) |
 | `POST`   | `/verify/logout`           | Clear the `rl_session` cookie                         |
 | `GET`    | `/players/{guild_id}`      | Player list page                                      |
 | `GET`    | `/players/{guild_id}/data` | Paginated player data (JSON)                          |
@@ -89,12 +90,15 @@ A role link evaluates one condition against the verified member's Steam data.
 
 **Account-level**: Steam level, account age in days, total games owned, VAC banned, game banned, member of a Steam group, country code.
 
+A Steam group is matched by either spelling of its ID: the 64-bit one in `steamcommunity.com/groups/<name>/memberslistxml/?xml=1` (`<groupID64>`, e.g. `103582791431044413`) or the short one `GetUserGroupList` returns (`1523005`). Account age and country come from the public profile — a private profile matches neither.
+
 Numeric fields support `=`, `>`, `>=`, `<`, `<=`, and `between` (inclusive range). Boolean and string-exact fields use equality.
 
 For the "owns the game" condition, the game's developer/publisher can optionally add a Steamworks Web API publisher key in the role-link config — ownership is then verified through Steam's partner API (`CheckAppOwnership`) instead of the member's public library. See [Privacy & ownership](#privacy--ownership).
 
 ## Privacy & ownership
 
+- **Profile must be public** for account age, country and Steam-group conditions — Steam withholds the creation date, country and group list of a private profile. The verify page says so when it sees one.
 - **Game details must be public** for game-based conditions (ownership, playtime, achievements) — unless the role link has a publisher key (below). If a member's Steam **Game details** privacy setting is private, the plugin sees an empty library and game-based roles are removed. The verify page warns affected members and offers a **Re-check** button (rate-limited to once per 5 minutes) that queues an immediate refresh after they fix their settings.
 - **Publisher key (optional)**: with a [Steamworks Web API publisher key](https://partner.steamgames.com/doc/webapi_overview/auth) configured, "owns the game" is checked against Steam's partner API, which answers even when game details are private. The key is stored server-side and never echoed back to the dashboard.
 - **Family Sharing is excluded**: borrowed games never grant roles. The publisher check enforces this explicitly — the license must belong to the linked Steam account — and shared titles don't appear in the public library either.

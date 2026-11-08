@@ -55,9 +55,6 @@ pub enum AppError {
     #[error("Configuration was changed in another tab")]
     StaleVersion,
 
-    #[error("Verification failed: {0}")]
-    VerificationFailed(String),
-
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -109,7 +106,6 @@ impl IntoResponse for AppError {
                 StatusCode::CONFLICT,
                 "This configuration was changed in another tab. Reload to get the latest, then re-apply your edit.",
             ),
-            AppError::VerificationFailed(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg.as_str()),
             AppError::Internal(e) => {
                 tracing::error!("Internal error: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")

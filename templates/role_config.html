@@ -209,6 +209,8 @@ function wireCopy(btnId,text){ const b=document.getElementById(btnId); if(!b) re
     setTimeout(()=>b.textContent='Copy link',1500); }); }); }
 
 let state=null, dirty=false, refreshInFlight=false, supPending=false;
+// The footer count, kept across re-renders so it doesn't blank on each click.
+let lastCount='', previewSeq=0, previewTimer=null;
 
 /* ---- condition catalog (mirrors the server's ConditionField enum) ---- */
 const FIELDS=[
@@ -238,7 +240,7 @@ const FIELDS=[
   yes:'Yes — must be game banned', no:'No — must NOT be game banned',
   help:'Whether the account has a game ban on record.'},
  {key:'inGroup',            cat:'account', kind:'text', label:'Member of a Steam group',
-  ph:'Group ID (numbers)', help:'The Steam group’s numeric ID — find it on the group page or a SteamID lookup tool.'},
+  ph:'Group ID (numbers)', help:'Open steamcommunity.com/groups/<your group>/memberslistxml/?xml=1 and copy the number in <groupID64>. The short group ID works too.'},
  {key:'countryCode',        cat:'account', kind:'text', label:'Country code',
   ph:'US', help:'Two-letter country code from their public profile, e.g. US, DE, JP.'},
 ];
@@ -346,7 +348,8 @@ function editKey(){
   const e=state._edit;
   return normKey(e.field,e.operator,e.value,e.value_end,e.app_id,state._pk);
 }
-function recomputeDirty(){ if(!state||!state._edit) return; setDirty(editKey()!==baselineKey()); }
+function recomputeDirty(){ if(!state||!state._edit) return; setDirty(editKey()!==baselineKey());
+  autoPreview(400); } // debounced: typing a number fires this per keystroke
 function setDirty(d){ dirty=d; postDirty(d); updateFoot(); }
 
 function validationError(){
@@ -369,7 +372,7 @@ function validationError(){
   if(f.key==='countryCode' && !/^[A-Za-z]{2}$/.test(String(e.value||'').trim()))
     return 'Country code is 2 letters, e.g. US.';
   if(f.key==='inGroup' && !/^[0-9]+$/.test(String(e.value||'').trim()))
-    return 'Steam group ID is numeric — find it on the group page.';
+    return 'A Steam group ID is a number — copy it from your group’s memberslistxml page.';
   if(f.key==='ownsGame' && state._pk && state._pk!==SECRET_MASK
      && !/^[0-9a-fA-F]{32}$/.test(state._pk.trim()))
     return 'Publisher key must be 32 hex characters (or leave it blank).';
@@ -482,7 +485,8 @@ function render(){
   else if(cur==='group') extra=`<div class="extra"><div class="inline">Steam group ID
     <input type="text" id="gid" inputmode="numeric" placeholder="103582791429521408"
       value="${esc(state._txt.group)}" style="width:200px">
-    <span class="hint">The group’s numeric ID — find it on the group page or a SteamID lookup tool.</span></div></div>`;
+    <span class="hint">Open steamcommunity.com/groups/<b>your-group</b>/memberslistxml/?xml=1
+      and copy the number in &lt;groupID64&gt;. The short group ID works too.</span></div></div>`;
   else if(cur==='custom') extra=`<div class="extra"><div class="adv" id="rule"></div></div>`;
 
   // Public players-page server-wide setting. Always rendered so admins
@@ -541,6 +545,7 @@ function render(){
   wireExtraInputs(cur);
   document.getElementById('save').addEventListener('click',doSave);
   document.getElementById('preview').addEventListener('click',doPreviewEdit);
+  document.getElementById('count').innerHTML=lastCount;
   if(cur==='custom') renderRule();
   updateFoot(); postHeight();
 }
@@ -632,37 +637,56 @@ async function setViewPerm(next){
   finally{ supPending=false; }
 }
 
-async function doPreview(){
-  const el=document.getElementById('count'); if(!el) return;
-  try{
-    const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/preview`,
-      {headers:apiHeaders(),credentials:apiCreds(),cache:'no-store'});
-    const d=await r.json();
-    if(!r.ok||d.available===false){ el.textContent=''; return; }
-    el.innerHTML=`<span class="ok">${d.matching}</span> of ${d.linked} linked member(s) match`
-      +(dirty?` · <span style="color:#fbbf24">Save to apply</span>`:``);
-  }catch(_){ el.textContent=''; }
-  postHeight();
+function setCount(html){ lastCount=html; const el=document.getElementById('count');
+  if(el) el.innerHTML=html; postHeight(); }
+function countHtml(d,unsaved){
+  return `<span class="ok">${d.matching}</span> of ${d.linked} linked member(s) match`
+    +(unsaved?` · <span style="color:#fbbf24">Preview of unsaved rule</span>`:``);
 }
-function autoPreview(){ doPreview(); }
+// The count always describes the rule on screen: the saved rule's when
+// nothing is unsaved, the edit's (labelled) when something is. It used to
+// show the saved rule's count beside an unsaved choice, so every new link
+// opened on "0 of N linked member(s) match · Save to apply" under "People
+// who own our game" — a rule with no App ID yet. An unfinished rule shows no
+// count: the footer already says what it is missing.
+function autoPreview(delay){ clearTimeout(previewTimer);
+  previewTimer=setTimeout(runAutoPreview, delay||0); }
+async function runAutoPreview(){
+  if(!state||!state._edit) return;
+  const seq=++previewSeq, unsaved=dirty;
+  if(unsaved&&validationError()){ setCount(''); return; }
+  const url=`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/preview`;
+  try{
+    const r=unsaved
+      ? await fetch(url,{method:'POST',headers:apiHeaders(),credentials:apiCreds(),
+          body:JSON.stringify({config:buildPayload()})})
+      : await fetch(url,{headers:apiHeaders(),credentials:apiCreds(),cache:'no-store'});
+    const d=await r.json().catch(()=>({}));
+    if(seq!==previewSeq) return; // a newer edit already asked
+    if(r.ok&&d.available!==false){ setCount(countHtml(d,unsaved)); return; }
+    if(r.status===400&&d.error) setCount(`<span style="color:#fbbf24">${esc(d.error)}</span>`);
+    else setCount(r.ok&&d.reason?esc(d.reason):'');
+  }catch(_){ if(seq===previewSeq) setCount(''); }
+}
 
 // Previews the *current* (possibly unsaved) edit. POSTs the proposed
 // condition to the same /preview endpoint — backend dispatches by method.
 async function doPreviewEdit(){
-  const el=document.getElementById('count'); const btn=document.getElementById('preview');
+  const btn=document.getElementById('preview');
   if(!btn) return;
   const err=validationError();
   if(err){ postToast(err); return; }
   btn.disabled=true; const orig=btn.textContent; btn.textContent='Previewing…';
+  clearTimeout(previewTimer); const seq=++previewSeq; // supersedes any auto preview in flight
   try{
     const r=await fetch(`${BASE_URL}/admin/${GUILD_ID}/role/${ROLE_ID}/preview`,
       {method:'POST',headers:apiHeaders(),credentials:apiCreds(),
        body:JSON.stringify({config:buildPayload()})});
     const d=await r.json().catch(()=>({}));
+    if(seq!==previewSeq) return;
     if(!r.ok){ postToast(d.error||('Preview failed (HTTP '+r.status+')')); return; }
-    if(d.available===false){ el.textContent=d.reason||'Preview unavailable.'; postHeight(); return; }
-    el.innerHTML=`<span class="ok">${d.matching}</span> of ${d.linked} linked member(s) match`
-      +(dirty?` · <span style="color:#fbbf24">Preview of unsaved rule</span>`:``);
+    if(d.available===false){ setCount(esc(d.reason||'Preview unavailable.')); return; }
+    setCount(countHtml(d,dirty));
   }catch(e){ postToast('Network error: '+e); }
   finally{ btn.disabled=false; btn.textContent=orig; postHeight(); }
 }

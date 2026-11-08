@@ -1,0 +1,26 @@
+name: CI
+
+# Builds and runs the unit tests on every push and pull request (the Docker
+# workflow only builds the image). Branch pushes run it too, so a change can
+# be checked here before it reaches main.
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets --no-fail-fast

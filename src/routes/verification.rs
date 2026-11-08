@@ -30,6 +30,51 @@ fn derive_origin(base_url: &str) -> String {
     base_url.to_string()
 }
 
+/// Steam's OpenID endpoint — the only provider a callback may come from.
+const STEAM_OPENID: &str = "https://steamcommunity.com/openid/login";
+
+/// A Discord snowflake (the verify page's `?guild=`), or nothing.
+fn valid_guild(g: Option<&str>) -> Option<&str> {
+    g.filter(|g| (5..=25).contains(&g.len()) && g.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The verify page, keeping its server context, with an outcome it explains:
+/// `linked=true`, or `error=<message>` (shown in its red message box). Every
+/// step of the Steam round trip lands here — a raw JSON error in a browser tab
+/// is a dead end for a member.
+fn back_to_verify(base_url: &str, guild: Option<&str>, outcome: Result<(), &str>) -> Response {
+    let mut url = format!("{base_url}/verify?");
+    if let Some(g) = guild {
+        url.push_str(&format!("guild={g}&"));
+    }
+    match outcome {
+        Ok(()) => url.push_str("linked=true"),
+        Err(msg) => url.push_str(&format!("error={}", urlencoding::encode(msg))),
+    }
+    Redirect::temporary(&url).into_response()
+}
+
+/// Whether a Steam OpenID assertion is Steam's, about one identity, and
+/// addressed to this plugin's callback. Origin + path are compared, so Steam
+/// re-encoding our `?guild=` can't fail it.
+fn assertion_is_ours(
+    base_url: &str,
+    op_endpoint: Option<&str>,
+    claimed_id: &str,
+    identity: Option<&str>,
+    return_to: Option<&str>,
+) -> bool {
+    let want = reqwest::Url::parse(&format!("{base_url}/verify/callback")).ok();
+    let got = return_to.and_then(|r| reqwest::Url::parse(r).ok());
+    let addressed_to_us = got
+        .zip(want)
+        .is_some_and(|(got, want)| got.origin() == want.origin() && got.path() == want.path());
+    op_endpoint == Some(STEAM_OPENID) && identity == Some(claimed_id) && addressed_to_us
+}
+
+/// Seconds a member must wait between two role re-syncs from the verify page.
+const SYNC_COOLDOWN_SECS: u64 = 60;
+
 pub fn render_verify_page(base_url: &str) -> String {
     let login_url = format!("{base_url}/verify/login");
 
@@ -127,8 +172,9 @@ pub fn render_verify_page(base_url: &str) -> String {
         <div class="info-row"><span class="label">Steam</span> <span class="val" id="linked-steam"></span></div>
         <div class="info-row"><span class="label">Discord</span> <span class="val" id="linked-discord" style="color:#8f9bab;font-weight:400;font-size:13px;"></span></div>
         <div id="privacy-warning" class="warn-card hidden">
-            <p style="margin:0 0 8px;"><strong>Your Steam game details are private</strong> — set them to public, then re-check. Game-based roles (ownership, playtime, achievements) can't be verified while your game details are hidden.</p>
-            <p style="margin:0 0 12px;">Steam → <a href="https://steamcommunity.com/my/edit/settings" target="_blank" rel="noopener">Privacy Settings</a> → set <strong>Game details</strong> to Public.</p>
+            <p id="privacy-games" style="margin:0 0 8px;"><strong>Your Steam game details are private</strong> — set them to public, then re-check. Game-based roles (ownership, playtime, achievements) can't be verified while your game details are hidden.</p>
+            <p id="privacy-profile" class="hidden" style="margin:0 0 8px;"><strong>Your Steam profile is private</strong> — set it to public, then re-check. Roles based on your games, account age, country or Steam groups can't be verified while it's hidden.</p>
+            <p style="margin:0 0 12px;">Steam → <a href="https://steamcommunity.com/my/edit/settings" target="_blank" rel="noopener">Privacy Settings</a> → set <strong id="privacy-setting">Game details</strong> to Public.</p>
             <button id="recheck-btn" class="btn btn-steam" onclick="doRecheck()">Re-check</button>
         </div>
         <p style="color:#4ade80; margin-top:12px; font-size:13px;">Your roles are assigned automatically based on your Steam data.</p>
@@ -174,13 +220,17 @@ pub fn render_verify_page(base_url: &str) -> String {
         }} catch (e) {{ return ''; }}
     }})();
 
-    // Preserve the guild context across the Discord OAuth round-trip.
+    // Preserve the guild context across the Discord OAuth round-trip, and
+    // across Steam's sign-in (the plugin carries it on Steam's return_to).
     (function patchLoginHref() {{
         if (!guildId) return;
         const link = document.querySelector('#login-section a.btn-discord');
-        if (!link) return;
-        const returnTo = '/steam-player-role/verify?guild=' + encodeURIComponent(guildId);
-        link.href = '/auth/login?return_to=' + encodeURIComponent(returnTo);
+        if (link) {{
+            const returnTo = '/steam-player-role/verify?guild=' + encodeURIComponent(guildId);
+            link.href = '/auth/login?return_to=' + encodeURIComponent(returnTo);
+        }}
+        const steam = document.querySelector('#steam-section a.btn-steam');
+        if (steam) steam.href = API + '/verify/steam?guild=' + encodeURIComponent(guildId);
     }})();
 
     async function api(method, path, body) {{
@@ -288,14 +338,25 @@ pub fn render_verify_page(base_url: &str) -> String {
             if (s.linked) {{
                 document.getElementById('linked-steam').textContent = s.steam_name || s.linked;
                 document.getElementById('linked-discord').textContent = s.display_name;
-                document.getElementById('privacy-warning').classList.toggle('hidden', s.library_visible !== false);
+                // A private profile hides more than the games (account age,
+                // country, groups), so it gets its own wording.
+                const profilePrivate = s.profile_public === false;
+                document.getElementById('privacy-profile').classList.toggle('hidden', !profilePrivate);
+                document.getElementById('privacy-games').classList.toggle('hidden', profilePrivate);
+                document.getElementById('privacy-setting').textContent = profilePrivate ? 'My profile and Game details' : 'Game details';
+                document.getElementById('privacy-warning').classList.toggle('hidden', !profilePrivate && s.library_visible !== false);
                 showSection('linked-section');
             }} else {{
                 document.getElementById('steam-discord').textContent = s.display_name;
                 showSection('steam-section');
             }}
-            // Session is valid — apply per-guild side effects (if any).
-            applyGuildContext();
+            // Session is valid — apply per-guild side effects (if any), then
+            // let a linked member's roles catch up with the server they came
+            // from (cached data, no Steam calls; at most once a minute).
+            applyGuildContext().finally(() => {{
+                if (isLinked) api('POST', '/verify/sync').catch(() => {{}});
+            }});
+            if (justLinked) showMsg('Steam account linked — your roles arrive within a minute.', 'success');
         }} catch (e) {{
             showSection('login-section');
         }}
@@ -335,14 +396,17 @@ pub fn render_verify_page(base_url: &str) -> String {
         }} catch (e) {{ showMsg(e.message, 'error'); }}
     }}
 
-    // Check for callback result
+    // Check for callback result. The URL keeps its ?guild= so a reload stays
+    // on this server's page.
     const params = new URLSearchParams(window.location.search);
-    if (params.get('linked') === 'true') {{
-        window.history.replaceState({{}}, '', window.location.pathname);
+    const cleanUrl = window.location.pathname + (guildId ? '?guild=' + encodeURIComponent(guildId) : '');
+    const justLinked = params.get('linked') === 'true';
+    if (justLinked) {{
+        window.history.replaceState({{}}, '', cleanUrl);
     }} else if (params.get('error')) {{
         const err = params.get('error');
-        window.history.replaceState({{}}, '', window.location.pathname);
-        setTimeout(() => showMsg(decodeURIComponent(err), 'error'), 100);
+        window.history.replaceState({{}}, '', cleanUrl);
+        setTimeout(() => showMsg(err, 'error'), 100);
     }}
 
     init();
@@ -371,8 +435,9 @@ pub async fn status(
 ) -> Result<Json<Value>, AppError> {
     let (discord_id, display_name) = get_session(&jar, &state.config.session_secret)?;
 
-    let account = sqlx::query_as::<_, (String, Option<String>, Option<bool>)>(
-        "SELECT la.steam_id, la.steam_name, uc.library_visible \
+    let account = sqlx::query_as::<_, (String, Option<String>, Option<bool>, Option<i32>)>(
+        "SELECT la.steam_id, la.steam_name, uc.library_visible, \
+         (uc.profile_data->>'communityvisibilitystate')::int \
          FROM linked_accounts la \
          LEFT JOIN user_cache uc ON uc.steam_id = la.steam_id \
          WHERE la.discord_id = $1",
@@ -388,6 +453,10 @@ pub async fn status(
         "steam_name": account.as_ref().and_then(|a| a.1.as_ref()),
         // Default true: no cache row yet means "not checked", not "private".
         "library_visible": account.as_ref().map_or(true, |a| a.2.unwrap_or(true)),
+        // Steam's communityvisibilitystate: 3 is public; anything else hides
+        // the account's creation date, country and groups. Unknown (not
+        // fetched yet) counts as public, like library_visible.
+        "profile_public": account.as_ref().map_or(true, |a| a.3.is_none_or(|v| v == 3)),
     })))
 }
 
@@ -431,12 +500,70 @@ pub async fn recheck(
     Ok(Json(json!({"success": true})))
 }
 
+/// Re-evaluate a linked member's roles from their cached Steam data — no
+/// Steam calls. The verify page sends this once it has told the gateway
+/// which server the member came from (`?guild=` → `ensure_guild`), so a
+/// member who linked Steam for one server and later joins another gets that
+/// server's roles now, not at their next data refresh (which, for a stable
+/// account, can be days away). At most once a minute per member.
+pub async fn sync_roles(
+    State(state): State<Arc<AppState>>,
+    jar: CookieJar,
+) -> Result<Json<Value>, AppError> {
+    let (discord_id, _) = get_session(&jar, &state.config.session_secret)?;
+
+    let linked = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM linked_accounts WHERE discord_id = $1)",
+    )
+    .bind(&discord_id)
+    .fetch_one(&state.pool)
+    .await?;
+    if !linked {
+        return Err(AppError::NotFound("No linked account found".into()));
+    }
+
+    {
+        let mut last = state.verify_syncs.lock().await;
+        let now = std::time::Instant::now();
+        let cooldown = std::time::Duration::from_secs(SYNC_COOLDOWN_SECS);
+        last.retain(|_, at| now.duration_since(*at) < cooldown);
+        if last.contains_key(&discord_id) {
+            return Ok(Json(json!({"queued": false})));
+        }
+        last.insert(discord_id.clone(), now);
+    }
+
+    let _ = state
+        .player_sync_tx
+        .send(PlayerSyncEvent::PlayerUpdated {
+            discord_id: discord_id.clone(),
+        })
+        .await;
+
+    Ok(Json(json!({"queued": true})))
+}
+
+#[derive(Deserialize)]
+pub struct SteamLoginQuery {
+    guild: Option<String>,
+}
+
 /// Redirect to Steam OpenID login
 pub async fn steam_login(
     State(state): State<Arc<AppState>>,
     jar: CookieJar,
+    Query(query): Query<SteamLoginQuery>,
 ) -> Result<Response, AppError> {
-    let (discord_id, _) = get_session(&jar, &state.config.session_secret)?;
+    let base = &state.config.base_url;
+    let guild = valid_guild(query.guild.as_deref());
+    let Ok((discord_id, _)) = get_session(&jar, &state.config.session_secret) else {
+        // Signed out (or the session lapsed): the verify page starts at step 1.
+        return Ok(back_to_verify(
+            base,
+            guild,
+            Err("Sign in with Discord first."),
+        ));
+    };
 
     // Check if already linked
     let existing = sqlx::query_scalar::<_, String>(
@@ -447,8 +574,10 @@ pub async fn steam_login(
     .await?;
 
     if existing.is_some() {
-        return Err(AppError::BadRequest(
-            "You already have a linked Steam account. Unlink it first.".into(),
+        return Ok(back_to_verify(
+            base,
+            guild,
+            Err("You already have a linked Steam account. Unlink it first."),
         ));
     }
 
@@ -478,11 +607,16 @@ pub async fn steam_login(
     .execute(&state.pool)
     .await?;
 
-    let return_to = format!("{}/verify/callback", state.config.base_url);
-    let realm = derive_origin(&state.config.base_url);
+    // The server context rides through Steam on return_to (Steam signs it),
+    // so the member lands back on their server's verify page.
+    let return_to = match guild {
+        Some(g) => format!("{base}/verify/callback?guild={g}"),
+        None => format!("{base}/verify/callback"),
+    };
+    let realm = derive_origin(base);
 
     let steam_url = format!(
-        "https://steamcommunity.com/openid/login?\
+        "{STEAM_OPENID}?\
          openid.ns=http://specs.openid.net/auth/2.0\
          &openid.mode=checkid_setup\
          &openid.return_to={}\
@@ -498,6 +632,10 @@ pub async fn steam_login(
 
 #[derive(Deserialize)]
 pub struct CallbackQuery {
+    /// Our own `?guild=` on return_to (steam_login), not an OpenID field.
+    guild: Option<String>,
+    #[serde(rename = "openid.mode")]
+    openid_mode: Option<String>,
     #[serde(rename = "openid.claimed_id")]
     openid_claimed_id: Option<String>,
     #[serde(rename = "openid.sig")]
@@ -524,25 +662,52 @@ pub async fn callback(
     jar: CookieJar,
     Query(query): Query<CallbackQuery>,
 ) -> Result<Response, AppError> {
-    let (discord_id, _) = get_session(&jar, &state.config.session_secret)?;
+    let base = state.config.base_url.clone();
+    let guild = valid_guild(query.guild.as_deref()).map(str::to_string);
+    let back = |outcome: Result<(), &str>| back_to_verify(&base, guild.as_deref(), outcome);
+
+    let Ok((discord_id, _)) = get_session(&jar, &state.config.session_secret) else {
+        return Ok(back(Err(
+            "Your sign-in expired. Sign in with Discord again, then link Steam.",
+        )));
+    };
+
+    if query.openid_mode.as_deref() == Some("cancel") {
+        return Ok(back(Err(
+            "Steam sign-in was cancelled. Link Steam to try again.",
+        )));
+    }
 
     // Extract SteamID64 from claimed_id
-    let claimed_id = query
+    let Some(steam_id) = query
         .openid_claimed_id
         .as_deref()
-        .ok_or(AppError::VerificationFailed("Missing claimed_id".into()))?;
+        .and_then(|c| c.strip_prefix("https://steamcommunity.com/openid/id/"))
+        .filter(|id| id.len() == 17 && id.bytes().all(|b| b.is_ascii_digit()))
+    else {
+        return Ok(back(Err(
+            "Steam didn't return a valid Steam ID. Please try again.",
+        )));
+    };
+    let claimed_id = query.openid_claimed_id.as_deref().unwrap_or_default();
 
-    let steam_id = claimed_id
-        .strip_prefix("https://steamcommunity.com/openid/id/")
-        .ok_or(AppError::VerificationFailed(
-            "Invalid claimed_id format".into(),
-        ))?;
-
-    // Validate: must be numeric SteamID64
-    if steam_id.len() != 17 || !steam_id.chars().all(|c| c.is_ascii_digit()) {
-        return Err(AppError::VerificationFailed(
-            "Invalid SteamID format".into(),
-        ));
+    // The assertion must be Steam's, about the same identity, and addressed to
+    // US. Steam's check_authentication confirms only that Steam signed it — a
+    // sign-in Steam issued to another site (return_to elsewhere) is signed
+    // too, and replayed here it would link that member's Steam account to
+    // whoever replayed it.
+    if !assertion_is_ours(
+        &base,
+        query.openid_op_endpoint.as_deref(),
+        claimed_id,
+        query.openid_identity.as_deref(),
+        query.openid_return_to.as_deref(),
+    ) {
+        tracing::warn!(
+            discord_id,
+            "Steam OpenID assertion not addressed to this plugin"
+        );
+        return Ok(back(Err("Steam authentication failed. Please try again.")));
     }
 
     // Verify the response with Steam's check_authentication endpoint
@@ -577,29 +742,27 @@ pub async fn callback(
         ),
     ];
 
-    let resp = state
+    let body = match state
         .http
-        .post("https://steamcommunity.com/openid/login")
+        .post(STEAM_OPENID)
         .form(&verify_params)
         .send()
         .await
-        .map_err(|e| {
-            AppError::VerificationFailed(format!("Steam verification request failed: {e}"))
-        })?;
-
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| AppError::VerificationFailed(format!("Failed to read Steam response: {e}")))?;
+    {
+        Ok(resp) => resp.text().await.unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!(
+                discord_id,
+                "Steam check_authentication failed: {}",
+                e.without_url()
+            );
+            String::new()
+        }
+    };
 
     if !body.contains("is_valid:true") {
         tracing::warn!(discord_id, steam_id, "Steam OpenID validation failed");
-        let redirect_url = format!(
-            "{}/verify?error={}",
-            state.config.base_url,
-            urlencoding::encode("Steam authentication failed. Please try again.")
-        );
-        return Ok(Redirect::temporary(&redirect_url).into_response());
+        return Ok(back(Err("Steam authentication failed. Please try again.")));
     }
 
     // Verify we have a pending verification session for this user
@@ -612,12 +775,7 @@ pub async fn callback(
     .unwrap_or(false);
 
     if !session_exists {
-        let redirect_url = format!(
-            "{}/verify?error={}",
-            state.config.base_url,
-            urlencoding::encode("Verification session expired. Please try again.")
-        );
-        return Ok(Redirect::temporary(&redirect_url).into_response());
+        return Ok(back(Err("Verification session expired. Please try again.")));
     }
 
     // Check if this Steam ID is already linked to another Discord user
@@ -630,14 +788,9 @@ pub async fn callback(
 
     if let Some(other_discord) = steam_taken {
         if other_discord != discord_id {
-            let redirect_url = format!(
-                "{}/verify?error={}",
-                state.config.base_url,
-                urlencoding::encode(
-                    "This Steam account is already linked to another Discord user."
-                )
-            );
-            return Ok(Redirect::temporary(&redirect_url).into_response());
+            return Ok(back(Err(
+                "This Steam account is already linked to another Discord user.",
+            )));
         }
     }
 
@@ -691,8 +844,7 @@ pub async fn callback(
 
     tracing::info!(discord_id, steam_id, "Steam account linked");
 
-    let redirect_url = format!("{}/verify?linked=true", state.config.base_url);
-    Ok(Redirect::temporary(&redirect_url).into_response())
+    Ok(back(Ok(())))
 }
 
 pub async fn logout(jar: CookieJar) -> (CookieJar, Json<Value>) {
@@ -746,4 +898,105 @@ pub async fn unlink(
     tracing::info!(discord_id, steam_id = account.0, "Steam account unlinked");
 
     Ok(Json(json!({"success": true})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: &str = "https://plugin-rolelogic.faizo.net/steam-player-role";
+    const ID: &str = "https://steamcommunity.com/openid/id/76561198012345678";
+
+    #[test]
+    fn assertion_for_our_callback_is_ours() {
+        let rt = format!("{BASE}/verify/callback?guild=913482057120645120");
+        assert!(assertion_is_ours(
+            BASE,
+            Some(STEAM_OPENID),
+            ID,
+            Some(ID),
+            Some(&rt)
+        ));
+        let bare = format!("{BASE}/verify/callback");
+        assert!(assertion_is_ours(
+            BASE,
+            Some(STEAM_OPENID),
+            ID,
+            Some(ID),
+            Some(&bare)
+        ));
+    }
+
+    #[test]
+    fn assertion_for_another_site_is_refused() {
+        // Steam signed it, but for someone else's site: a replay.
+        let other = "https://other-site.example/auth/steam/return";
+        assert!(!assertion_is_ours(
+            BASE,
+            Some(STEAM_OPENID),
+            ID,
+            Some(ID),
+            Some(other)
+        ));
+        let sibling = "https://plugin-rolelogic.faizo.net/other-plugin/verify/callback";
+        assert!(!assertion_is_ours(
+            BASE,
+            Some(STEAM_OPENID),
+            ID,
+            Some(ID),
+            Some(sibling)
+        ));
+        assert!(!assertion_is_ours(
+            BASE,
+            Some(STEAM_OPENID),
+            ID,
+            Some(ID),
+            None
+        ));
+    }
+
+    #[test]
+    fn assertion_must_be_steams_about_one_identity() {
+        let rt = format!("{BASE}/verify/callback");
+        let evil = "https://evil.example/openid/login";
+        assert!(!assertion_is_ours(
+            BASE,
+            Some(evil),
+            ID,
+            Some(ID),
+            Some(&rt)
+        ));
+        let other_id = "https://steamcommunity.com/openid/id/76561198099999999";
+        assert!(!assertion_is_ours(
+            BASE,
+            Some(STEAM_OPENID),
+            ID,
+            Some(other_id),
+            Some(&rt)
+        ));
+    }
+
+    #[test]
+    fn verify_redirects_keep_the_server() {
+        let r = back_to_verify(
+            BASE,
+            Some("913482057120645120"),
+            Err("Sign in with Discord first."),
+        );
+        let loc = r.headers().get("location").unwrap().to_str().unwrap();
+        assert_eq!(
+            loc,
+            format!(
+                "{BASE}/verify?guild=913482057120645120&error=Sign%20in%20with%20Discord%20first."
+            )
+        );
+        let r = back_to_verify(BASE, None, Ok(()));
+        let loc = r.headers().get("location").unwrap().to_str().unwrap();
+        assert_eq!(loc, format!("{BASE}/verify?linked=true"));
+        assert_eq!(valid_guild(Some("12ab")), None);
+        assert_eq!(
+            valid_guild(Some("913482057120645120")),
+            Some("913482057120645120")
+        );
+    }
 }

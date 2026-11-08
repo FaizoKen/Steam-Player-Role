@@ -4,7 +4,12 @@ use futures_util::stream::{self, StreamExt};
 use sqlx::PgPool;
 
 use crate::error::AppError;
-use crate::models::condition::{Condition, ConditionField, ConditionOperator};
+use crate::models::condition::{group_id_forms, Condition, ConditionField, ConditionOperator};
+
+/// Whole days since the Steam account was created, floored — the number
+/// condition_eval compares. NULL (a private profile hides `timecreated`)
+/// makes every comparison false, as it does there.
+const ACCOUNT_AGE_DAYS: &str = "FLOOR(EXTRACT(EPOCH FROM (now() - uc.account_created)) / 86400)";
 use crate::services::auth_gateway;
 use crate::services::condition_eval::{
     evaluate_conditions, AppOwnershipRow, GameAchievementRow, UserCacheRow,
@@ -357,17 +362,14 @@ fn build_condition_where(
                     let idx_start = binds.len() + 1;
                     let idx_end = binds.len() + 2;
                     clauses.push(format!(
-                        "EXTRACT(EPOCH FROM (now() - uc.account_created)) / 86400 >= ${idx_start} \
-                         AND EXTRACT(EPOCH FROM (now() - uc.account_created)) / 86400 <= ${idx_end}"
+                        "{ACCOUNT_AGE_DAYS} >= ${idx_start} AND {ACCOUNT_AGE_DAYS} <= ${idx_end}"
                     ));
                     binds.push(ConditionBind::Int(val));
                     binds.push(ConditionBind::Int(end));
                 } else {
                     let op = condition.operator.sql_operator();
                     let idx = binds.len() + 1;
-                    clauses.push(format!(
-                        "EXTRACT(EPOCH FROM (now() - uc.account_created)) / 86400 {op} ${idx}"
-                    ));
+                    clauses.push(format!("{ACCOUNT_AGE_DAYS} {op} ${idx}"));
                     binds.push(ConditionBind::Int(val));
                 }
             }
@@ -390,12 +392,17 @@ fn build_condition_where(
                 }
             }
             ConditionField::InGroup => {
-                let gid = condition.value.as_str().unwrap_or("").to_string();
-                let idx = binds.len() + 1;
+                // GetUserGroupList stores the short group ID; admins usually
+                // paste the long 64-bit one. Match either spelling.
+                let (short, long) = group_id_forms(condition.value.as_str().unwrap_or(""));
+                let a = binds.len() + 1;
+                let b = binds.len() + 2;
                 clauses.push(format!(
-                    "uc.groups @> concat('[{{\"gid\":\"', ${idx}::text, '\"}}]')::jsonb"
+                    "EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(uc.groups) = 'array' \
+                     THEN uc.groups ELSE '[]'::jsonb END) g WHERE g->>'gid' IN (${a}, ${b}))"
                 ));
-                binds.push(ConditionBind::Text(gid));
+                binds.push(ConditionBind::Text(short));
+                binds.push(ConditionBind::Text(long));
             }
             // Game-specific conditions that need JSONB or achievement table
             // are evaluated in-memory after SQL pre-filter

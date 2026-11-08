@@ -1,5 +1,38 @@
 use serde::{Deserialize, Serialize};
 
+/// A Steam group's 64-bit ID is this base plus the group's 32-bit account
+/// ID. GetUserGroupList answers with the short form ("1523005"); group pages,
+/// `memberslistxml` and lookup tools show the long one
+/// ("103582791431044413"). Both name the same group.
+pub const GROUP_ID64_BASE: u64 = 103_582_791_429_521_408;
+
+/// The short (account-ID) spelling of a Steam group ID, from either form.
+/// Anything that isn't a group ID comes back trimmed and otherwise as is, so
+/// it simply matches nothing.
+pub fn group_account_id(raw: &str) -> String {
+    let s = raw.trim();
+    match s.parse::<u64>() {
+        Ok(v) if v >= GROUP_ID64_BASE && v - GROUP_ID64_BASE <= u32::MAX as u64 => {
+            (v - GROUP_ID64_BASE).to_string()
+        }
+        Ok(v) => v.to_string(),
+        Err(_) => s.to_string(),
+    }
+}
+
+/// Both spellings of a Steam group ID — `(short, long)` — so a lookup
+/// matches whichever form Steam stored.
+pub fn group_id_forms(raw: &str) -> (String, String) {
+    let short = group_account_id(raw);
+    let long = short
+        .parse::<u64>()
+        .ok()
+        .filter(|v| *v <= u32::MAX as u64)
+        .map(|v| (v + GROUP_ID64_BASE).to_string())
+        .unwrap_or_else(|| short.clone());
+    (short, long)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum ConditionField {
@@ -161,4 +194,25 @@ pub struct Condition {
     /// Steam App ID for game-specific conditions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_ids_normalise_to_the_short_form() {
+        assert_eq!(group_account_id("103582791431044413"), "1523005");
+        assert_eq!(group_account_id(" 1523005 "), "1523005");
+        assert_eq!(group_account_id("0001523005"), "1523005");
+        assert_eq!(group_account_id("steamlug"), "steamlug");
+        assert_eq!(
+            group_id_forms("1523005"),
+            ("1523005".to_string(), "103582791431044413".to_string())
+        );
+        assert_eq!(
+            group_id_forms("103582791431044413"),
+            ("1523005".to_string(), "103582791431044413".to_string())
+        );
+    }
 }

@@ -38,6 +38,9 @@ pub struct AppState {
     /// Origins permitted to issue cookie-authenticated state-changing
     /// requests (the per-handler `csrf::verify_origin` allowlist).
     pub allowed_origins: Vec<String>,
+    /// When each member last asked the verify page to re-sync their roles
+    /// (`POST /verify/sync`, at most once a minute each).
+    pub verify_syncs: tokio::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
 }
 
 #[tokio::main]
@@ -110,6 +113,7 @@ async fn main() {
         verify_html,
         players_html,
         allowed_origins,
+        verify_syncs: tokio::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
     // Persist the quota ledger on an interval.
@@ -174,6 +178,7 @@ async fn main() {
                 .route("/verify/callback", get(routes::verification::callback))
                 .route("/verify/unlink", post(routes::verification::unlink))
                 .route("/verify/recheck", post(routes::verification::recheck))
+                .route("/verify/sync", post(routes::verification::sync_roles))
                 .route("/verify/logout", post(routes::verification::logout))
                 // Player list (public)
                 .route("/players/{guild_id}", get(routes::players::players_page))

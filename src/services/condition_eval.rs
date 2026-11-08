@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::models::condition::{Condition, ConditionField, ConditionOperator};
+use crate::models::condition::{group_account_id, Condition, ConditionField, ConditionOperator};
 
 /// Row from user_cache table
 pub struct UserCacheRow {
@@ -186,10 +186,15 @@ fn evaluate_single(
             compare(actual, expected, &condition.operator, &condition.value_end)
         }
         ConditionField::AccountAgeDays => {
-            let actual = uc
-                .account_created
-                .map(|created| (chrono::Utc::now() - created).num_days())
-                .unwrap_or(0);
+            // Steam only reports `timecreated` for a public profile. Unknown
+            // matches nothing — as the SQL path's NULL comparison does — so a
+            // private profile can't pass "less than 30 days" here and fail it
+            // on the next config sync.
+            let Some(created) = uc.account_created else {
+                return false;
+            };
+            // Whole days, floored: the SQL path uses FLOOR too.
+            let actual = (chrono::Utc::now() - created).num_days();
             let expected = condition.value.as_i64().unwrap_or(0);
             compare(actual, expected, &condition.operator, &condition.value_end)
         }
@@ -207,10 +212,17 @@ fn evaluate_single(
             uc.is_game_banned == expected
         }
         ConditionField::InGroup => {
-            let target_gid = condition.value.as_str().unwrap_or("");
-            uc.groups
-                .as_array()
-                .is_some_and(|groups| groups.iter().any(|g| g["gid"].as_str() == Some(target_gid)))
+            // Admins paste the long 64-bit group ID; GetUserGroupList stores
+            // the short one. Compare both sides in the short form.
+            let target = group_account_id(condition.value.as_str().unwrap_or(""));
+            !target.is_empty()
+                && uc.groups.as_array().is_some_and(|groups| {
+                    groups.iter().any(|g| {
+                        g["gid"]
+                            .as_str()
+                            .is_some_and(|gid| group_account_id(gid) == target)
+                    })
+                })
         }
         ConditionField::CountryCode => {
             let expected = condition.value.as_str().unwrap_or("");
@@ -253,7 +265,8 @@ mod tests {
                 {"appid": 730, "name": "Counter-Strike 2", "playtime_forever": 12000, "playtime_2weeks": 120},
                 {"appid": 570, "name": "Dota 2", "playtime_forever": 600}
             ]),
-            groups: json!([{"gid": "103582791429521408"}, {"gid": "103582791432297141"}]),
+            // GetUserGroupList's own shape: short (32-bit) group IDs.
+            groups: json!([{"gid": "1523005"}, {"gid": "25622692"}]),
             steam_level: 25,
             account_created: Some(chrono::Utc::now() - chrono::Duration::days(3650)),
             total_games_owned: 150,
@@ -366,21 +379,79 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_in_group() {
-        let conditions = vec![Condition {
+    fn in_group(gid: &str) -> Vec<Condition> {
+        vec![Condition {
             field: ConditionField::InGroup,
             operator: ConditionOperator::Eq,
-            value: json!("103582791429521408"),
+            value: json!(gid),
             value_end: None,
             app_id: None,
-        }];
+        }]
+    }
+
+    #[test]
+    fn test_in_group_by_64_bit_id() {
+        // What admins copy from <groupID64>: 103582791429521408 + 1523005.
         assert!(evaluate_conditions(
-            &conditions,
+            &in_group("103582791431044413"),
             &sample_user_cache(),
             &sample_achievements(),
             None
         ));
+    }
+
+    #[test]
+    fn test_in_group_by_short_id() {
+        assert!(evaluate_conditions(
+            &in_group(" 1523005 "),
+            &sample_user_cache(),
+            &sample_achievements(),
+            None
+        ));
+    }
+
+    #[test]
+    fn test_in_group_other_group() {
+        assert!(!evaluate_conditions(
+            &in_group("103582791429521412"),
+            &sample_user_cache(),
+            &sample_achievements(),
+            None
+        ));
+        assert!(!evaluate_conditions(
+            &in_group("not-a-group"),
+            &sample_user_cache(),
+            &sample_achievements(),
+            None
+        ));
+    }
+
+    #[test]
+    fn test_account_age_unknown_matches_nothing() {
+        // A private profile: Steam withholds timecreated.
+        let uc = UserCacheRow {
+            account_created: None,
+            ..sample_user_cache()
+        };
+        for op in [
+            ConditionOperator::Lt,
+            ConditionOperator::Gte,
+            ConditionOperator::Eq,
+        ] {
+            let conditions = vec![Condition {
+                field: ConditionField::AccountAgeDays,
+                operator: op,
+                value: json!(30),
+                value_end: None,
+                app_id: None,
+            }];
+            assert!(!evaluate_conditions(
+                &conditions,
+                &uc,
+                &sample_achievements(),
+                None
+            ));
+        }
     }
 
     #[test]
