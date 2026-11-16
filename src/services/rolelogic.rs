@@ -41,6 +41,28 @@ fn removal_held(status: reqwest::StatusCode, body: &str) -> bool {
     status == reqwest::StatusCode::CONFLICT && body.contains(RL_CONFIRM_REQUIRED)
 }
 
+/// A request that got no usable answer. reqwest's own message stops at
+/// "error sending request for url (…)"; what actually failed (DNS, connect,
+/// reset, timeout, a body that is not JSON) is in its source chain.
+fn request_failed(e: reqwest::Error) -> AppError {
+    AppError::RoleLogic(with_causes(&e))
+}
+
+fn with_causes(e: &dyn std::error::Error) -> String {
+    let mut msg = e.to_string();
+    let mut cause = e.source();
+    while let Some(c) = cause {
+        let text = c.to_string();
+        // Some layers repeat the message of the error they wrap.
+        if !msg.ends_with(&text) {
+            msg.push_str(": ");
+            msg.push_str(&text);
+        }
+        cause = c.source();
+    }
+    msg
+}
+
 #[derive(Clone)]
 pub struct RoleLogicClient {
     http: reqwest::Client,
@@ -78,7 +100,7 @@ impl RoleLogicClient {
             .header("Authorization", format!("Token {token}"))
             .send()
             .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+            .map_err(request_failed)?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -94,10 +116,7 @@ impl RoleLogicClient {
             )));
         }
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+        let body: serde_json::Value = resp.json().await.map_err(request_failed)?;
 
         let user_count = body["data"]["user_count"].as_u64().unwrap_or(0) as usize;
         let user_limit = body["data"]["user_limit"].as_u64().unwrap_or(100) as usize;
@@ -123,7 +142,7 @@ impl RoleLogicClient {
             .header("Authorization", format!("Token {token}"))
             .send()
             .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+            .map_err(request_failed)?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -150,10 +169,7 @@ impl RoleLogicClient {
             )));
         }
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+        let body: serde_json::Value = resp.json().await.map_err(request_failed)?;
 
         Ok(body["data"]["added"].as_bool().unwrap_or(false))
     }
@@ -176,7 +192,7 @@ impl RoleLogicClient {
             .header("Authorization", format!("Token {token}"))
             .send()
             .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+            .map_err(request_failed)?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -192,10 +208,7 @@ impl RoleLogicClient {
             )));
         }
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+        let body: serde_json::Value = resp.json().await.map_err(request_failed)?;
 
         Ok(body["data"]["removed"].as_bool().unwrap_or(false))
     }
@@ -222,7 +235,7 @@ impl RoleLogicClient {
             .json(user_ids)
             .send()
             .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+            .map_err(request_failed)?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -241,10 +254,7 @@ impl RoleLogicClient {
             )));
         }
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+        let body: serde_json::Value = resp.json().await.map_err(request_failed)?;
 
         Ok(body["data"]["user_count"].as_u64().unwrap_or(0) as usize)
     }
@@ -333,7 +343,7 @@ impl RoleLogicClient {
             .header("Authorization", format!("Token {token}"))
             .send()
             .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+            .map_err(request_failed)?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -349,10 +359,7 @@ impl RoleLogicClient {
             )));
         }
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+        let body: serde_json::Value = resp.json().await.map_err(request_failed)?;
 
         body["data"]["upload_id"]
             .as_str()
@@ -381,7 +388,7 @@ impl RoleLogicClient {
             .json(user_ids)
             .send()
             .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+            .map_err(request_failed)?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -413,7 +420,7 @@ impl RoleLogicClient {
             .header("Authorization", format!("Token {token}"))
             .send()
             .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+            .map_err(request_failed)?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -426,10 +433,7 @@ impl RoleLogicClient {
             )));
         }
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+        let body: serde_json::Value = resp.json().await.map_err(request_failed)?;
 
         Ok(body["data"]["user_count"].as_u64().unwrap_or(0) as usize)
     }
@@ -452,7 +456,7 @@ impl RoleLogicClient {
             .header("Authorization", format!("Token {token}"))
             .send()
             .await
-            .map_err(|e| AppError::RoleLogic(e.to_string()))?;
+            .map_err(request_failed)?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -477,6 +481,35 @@ mod tests {
     const DISABLED: &str = r#"{"errors":"This role link is disabled","requestId":"r"}"#;
     const GONE: &str = r#"{"errors":"Invalid or revoked token","requestId":"r"}"#;
     const HELD: &str = r#"{"errors":{"error":"confirm_required","code":"shrink","change_id":"c","previous":2,"next":0,"removals":2}}"#;
+
+    #[test]
+    fn a_failed_request_names_its_cause() {
+        #[derive(Debug)]
+        struct Wrap(&'static str, std::io::Error);
+        impl std::fmt::Display for Wrap {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(self.0)
+            }
+        }
+        impl std::error::Error for Wrap {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.1)
+            }
+        }
+        let refused =
+            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "connection refused");
+        let e = Wrap("error sending request for url (https://x/users)", refused);
+        assert_eq!(
+            with_causes(&e),
+            "error sending request for url (https://x/users): connection refused"
+        );
+        // A layer that repeats the message it wraps is not said twice.
+        let echo = Wrap(
+            "connection refused",
+            std::io::Error::other("connection refused"),
+        );
+        assert_eq!(with_causes(&echo), "connection refused");
+    }
 
     #[test]
     fn paused_and_disabled_links_are_inactive() {
